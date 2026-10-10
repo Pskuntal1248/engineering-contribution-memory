@@ -34,6 +34,42 @@ class Ingest:
     counts: dict[str, int]
 
 
+def infer_merged(prs: list[dict], commits: list[dict]) -> None:
+    """Closed PRs with no merge time from the gateway: confirm the merge from the repo's own commits
+    (merge_commit_sha seen, 'Merge pull request #N', or 'title (#N)'). Unconfirmed ones stay unmerged."""
+    for p in prs:
+        if N.pr_merged_at(p) or str(p.get("state", "")).lower() != "closed":
+            continue
+        repo, num = p.get("_repo", ""), p.get("number")
+        sha = p.get("merge_commit_sha") or (p.get("pull_request") or {}).get("merge_commit_sha") or ""
+        for c in commits:
+            if c.get("_repo") != repo:
+                continue
+            msg = ((c.get("commit") or {}).get("message") or c.get("message") or "").splitlines()
+            first = msg[0] if msg else ""
+            hit = bool(sha and c.get("sha") == sha) or re.match(rf"Merge pull request #{num}\b", first) or re.search(rf"\(#{num}\)\s*$", first)
+            if hit:
+                when = (c.get("commit") or {}).get("committer", {}).get("date") or (c.get("commit") or {}).get("author", {}).get("date") or p.get("closed_at")
+                p["merged_at"], p["_merged_basis"] = when, "merge commit found in repo history"
+                break
+
+
+def covered_by_pr(c: Item, prs: list[dict]) -> bool:
+    """A commit that is part of one of the user's PRs: same title, or only files the PR touched, made inside the PR's life."""
+    cd = N.parse_ts(c.date)
+    cpaths = set(c.meta.get("paths") or [])
+    for p in prs:
+        if p.get("_repo") != c.meta.get("repo") or N._login(p.get("user")).lower() != str(c.author).lower():
+            continue
+        if (p.get("title") or "").strip() and (p.get("title") or "").strip() == c.title.strip():
+            return True
+        start, end = N.parse_ts(p.get("created_at")), N.parse_ts(N.pr_merged_at(p) or p.get("closed_at"))
+        ppaths = {f.get("filename") for f in (p.get("files") or []) if isinstance(f, dict)}
+        if cd and start and end and cpaths and ppaths and cpaths <= ppaths and start.timestamp() - 7 * 86400 <= cd.timestamp() <= end.timestamp() + 120:
+            return True
+    return False
+
+
 def ingest(raw: dict[str, Any], cfg: Config, log: ToolLog | None = None) -> Ingest:
     items: list[Item] = []
     skipped: list[Skipped] = []
@@ -44,6 +80,7 @@ def ingest(raw: dict[str, Any], cfg: Config, log: ToolLog | None = None) -> Inge
     prs = raw.get("github", {}).get("prs", [])
     reviews = raw.get("github", {}).get("reviews", {})
     pr_by_key: dict[str, dict] = {}
+    infer_merged(prs, raw.get("github", {}).get("commits", []))
     for p in prs:
         repo = cfg.repo_aliases.get(p.get("_repo", ""), p.get("_repo", ""))
         pr_by_key[f"{p.get('_repo','')}#{p.get('number')}"] = p
@@ -57,6 +94,9 @@ def ingest(raw: dict[str, Any], cfg: Config, log: ToolLog | None = None) -> Inge
             reviewer = N._login(rv.get("user"))
             pr_author = N._login(pr.get("user"))
             # keep reviews I wrote, and reviews I received on my PRs (feedback patterns); drop everyone else's
+            if reviewer.lower() == cfg.username.lower() and pr_author.lower() == cfg.username.lower():
+                skipped.append(Skipped(f"gh:review:{repo}#{num}:{rv.get('id')}", "own comment on own PR (not a review given)"))
+                continue
             if reviewer.lower() == cfg.username.lower() or pr_author.lower() == cfg.username.lower():
                 take(N.normalize_review(rv, cfg.repo_aliases.get(repo, repo), int(num), pr_author, pr.get("html_url", ""), cfg.username, cfg.jira_projects))
     pr_nums = {(p.get("_repo", ""), str(p.get("number"))) for p in prs}
@@ -69,6 +109,8 @@ def ingest(raw: dict[str, Any], cfg: Config, log: ToolLog | None = None) -> Inge
                 x = Skipped(x.id, "commit by someone else")
             elif first.startswith("Merge ") or (m and (c.get("_repo", ""), m.group(1)) in pr_nums):
                 x = Skipped(x.id, "merge commit or commit already counted through its PR")
+            elif covered_by_pr(x, prs):
+                x = Skipped(x.id, "commit already counted through its PR (same title or same files, inside the PR's dates)")
         take(x)
     for t in raw.get("jira", []):
         take(N.normalize_ticket(t, cfg.jira_site, cfg.name_hints))
