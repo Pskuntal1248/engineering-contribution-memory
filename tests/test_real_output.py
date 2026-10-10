@@ -149,3 +149,12 @@ def test_messages_folded_into_a_conversation_are_listed_as_not_counted():
         {"channel": "uc10-test", "channel_id": "G1", "messages": [msgs("1791641922.86", "fixed the payout batch window timezone")]}]}}
     ing = ingest(raw, Config(username="u", repos=[], slack_channels=["uc10-test"]))
     assert len([i for i in ing.items if i.type == "thread"]) == 1 and any("merged into the same conversation" in s.reason for s in ing.skipped)
+
+
+def test_review_material_is_situation_action_result_per_project_with_links():
+    items = merge_threads(WORK + [Item(**t.__dict__) for t in FOUR])
+    corpus, _ = corpus_for("review_material", profile(items), items, title="t", terms=set(), keep_internal=False, colleagues=[], names=NAMES,
+                           date_from="", date_to="", run_notes=[], failed=[], quiet_line=None, new_ids=set())
+    body = corpus["sections"][0]["body"]
+    assert body.count("- Situation:") == 3 and body.count("- Action:") == 3 and body.count("- Result:") == 3
+    assert body.count("Evidence:") >= 3 and "](https://" in body and "1 PRs" not in body
