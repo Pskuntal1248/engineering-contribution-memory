@@ -6,42 +6,42 @@
 
 ### A hard bug
 
-I traced the payout mismatch to the UTC day window conflicting with IST settlement, fixed the window to use the merchant timezone, and reran the batch with matching totals.
+I traced the payout mismatch to a UTC day window conflicting with settlement's IST window, fixed the timezone handling, and reran the batch with matching totals.
 
 - Answers: Tell me about a hard bug you debugged.
 - Evidence: [payouts for the 18 Sep batch don't match settlement totals, anyone seen this?](https://the-glider.slack.com/archives/C0C7U7L87MM/p1791641890360289)
 
 ### A decision with trade-offs
 
-We will use BM25 with field-weighted scoring (title x3, body x1) plus a recency boost, implemented under SRCH-2.
+We will use BM25 with title-weighted scoring, body scoring, and a recency boost for search ranking.
 
 - Answers: Tell me about a technical decision you made and its trade-offs.
 - Evidence: [Design: Search ranking approach](https://pskuntal2005.atlassian.net/wiki/spaces/UTD/pages/229377/Design+Search+ranking+approach+UC10+TEST+DATA)
 
 ### A decision with trade-offs: Design: Payout reconciliation job
 
-We will run reconciliation nightly as a queue-backed job.
+The accepted design decides to run reconciliation nightly as a queue-backed job instead of a cron script.
 
 - Answers: Tell me about a technical decision you made and its trade-offs.
 - Evidence: [Design: Payout reconciliation job](https://app.notion.com/p/Design-Payout-reconciliation-job-UC10-TEST-DATA-3f5d2067fa9c80e1ba57f18448a1a6a5)
 
 ### Helping a teammate
 
-I guided retry-worker debugging by suggesting payload logging and tracing how the retry path rebuilds the job.
+I guided someone to log the retry job payload and trace how the retry path rebuilds it, revealing that the payload lacked a merchant_id.
 
 - Answers: Tell me about a time you helped someone unblock.
 - Evidence: [I keep getting a null pointer in the retry worker, not sure how to debug it.](https://the-glider.slack.com/archives/C0C7U7L87MM/p1791641945332839)
 
 ### Helping a teammate: how do we run the payouts service locally...
 
-I explained how to run the payouts service locally with the sandbox gateway and offered to document the setup in the README.
+I explained how to run the payouts service locally with the sandbox gateway and said I would add the instructions to the README.
 
 - Answers: Tell me about a time you helped someone unblock.
 - Evidence: [how do we run the payouts service locally with the sandbox gateway?](https://the-glider.slack.com/archives/C0C7U7L87MM/p1791641991634509)
 
 ### Delivering Payout reliability
 
-I added idempotency keys, five-attempt exponential-backoff retries, and a nightly reconciliation job that lists mismatching references; goal: I addressed duplicate payouts on retries, failed bank calls that were dropped, and settlement totals that did not match bank files.
+I added an idempotency key, retries with five attempts, and a nightly reconciliation that lists mismatching references; goal: I built payout idempotency, retries with exponential backoff, and a reconciliation job to address duplicate payouts, failed bank calls, and mismatched settlement totals.
 
 - Answers: Tell me about a project you delivered end to end.
 - Evidence: [PAY-1 Add idempotency key to payouts](https://github.com/Pskuntal1248/uc10-synthetic-test-data/pull/1)
@@ -49,7 +49,7 @@ I added idempotency keys, five-attempt exponential-backoff retries, and a nightl
 
 ### Delivering Search query parsing and ranking
 
-I added the query parser; the ranking change was reverted because its weights were wrong for short queries; goal: I built search parsing for quoted phrases and exclusions and added ranking so title matches could outrank body matches.
+I added query parsing; the ranking change was reverted because its weights were wrong for short queries; goal: I built search query parsing for quoted phrases and exclusions, and worked to rank title matches above body matches.
 
 - Answers: Tell me about a project you delivered end to end.
 - Evidence: [SRCH-1 Add query parser](https://github.com/Pskuntal1248/uc10-synthetic-test-data/pull/3)
@@ -57,7 +57,7 @@ I added the query parser; the ranking change was reverted because its weights we
 
 ### Delivering Session token refresh and login rate limiting
 
-I added token refresh when less than five minutes remained; the rate limiter was reverted because it locked out shared office IPs; goal: I addressed sessions expiring during checkout and slowed password guessing with a per-user login limiter.
+I added token refresh when under five minutes remained; the login rate limiter was reverted because it locked out shared office IPs; goal: I built session token refresh to address expirations during checkout and a per-user login limiter to slow password guessing.
 
 - Answers: Tell me about a project you delivered end to end.
 - Evidence: [AUTH-1 Add session token refresh](https://github.com/Pskuntal1248/uc10-synthetic-test-data/pull/6)
@@ -111,7 +111,7 @@ I added token refresh when less than five minutes remained; the rate limiter was
 | jira | 2026-10-10 | Session token refresh and login rate limiting | ticket | AUTH-1: Add session token refresh [TEST DATA] | https://pskuntal2005.atlassian.net/browse/AUTH-1 |  |
 | jira | 2026-10-10 | Session token refresh and login rate limiting | ticket | AUTH-2: Add login rate limiter [TEST DATA] | https://pskuntal2005.atlassian.net/browse/AUTH-2 |  |
 | doc | 2026-10-10 | Payout reliability | doc | Design: Payout reconciliation job [UC10 TEST DATA] | https://app.notion.com/p/Design-Payout-reconciliation-job-UC10-TEST-DATA-3f5d2067fa9c80e1ba57f18448a1a6a5 |  |
-| slack | 2026-10-10 | (unlinked) | thread | payouts for the 18 Sep batch don't match settlement totals, anyone seen this? | https://the-glider.slack.com/archives/C0C7U7L87MM/p1791641890360289 |  |
+| slack | 2026-10-10 | Payout reliability | thread | payouts for the 18 Sep batch don't match settlement totals, anyone seen this? | https://the-glider.slack.com/archives/C0C7U7L87MM/p1791641890360289 |  |
 | slack | 2026-10-10 | (unlinked) | thread | I keep getting a null pointer in the retry worker, not sure how to debug it. | https://the-glider.slack.com/archives/C0C7U7L87MM/p1791641945332839 |  |
 | slack | 2026-10-10 | (unlinked) | thread | how do we run the payouts service locally with the sandbox gateway? | https://the-glider.slack.com/archives/C0C7U7L87MM/p1791641991634509 |  |
 | slack | 2026-10-10 | Payout reliability | thread | PAY-1 idempotency keys are live in staging. AUTH-2 reopened after the rate limiter blocked... | https://the-glider.slack.com/archives/C0C7U7L87MM/p1791642029600679 |  |

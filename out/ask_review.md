@@ -49,7 +49,7 @@ None found in this period. The saved items are dated 2026-10-10 to 2026-10-10, s
 | jira | 2026-10-10 | Session token refresh and login rate limiting | ticket | AUTH-1: Add session token refresh [TEST DATA] | https://pskuntal2005.atlassian.net/browse/AUTH-1 |  |
 | jira | 2026-10-10 | Session token refresh and login rate limiting | ticket | AUTH-2: Add login rate limiter [TEST DATA] | https://pskuntal2005.atlassian.net/browse/AUTH-2 |  |
 | doc | 2026-10-10 | Payout reliability | doc | Design: Payout reconciliation job [UC10 TEST DATA] | https://app.notion.com/p/Design-Payout-reconciliation-job-UC10-TEST-DATA-3f5d2067fa9c80e1ba57f18448a1a6a5 |  |
-| slack | 2026-10-10 | (unlinked) | thread | payouts for the 18 Sep batch don't match settlement totals, anyone seen this? | https://the-glider.slack.com/archives/C0C7U7L87MM/p1791641890360289 |  |
+| slack | 2026-10-10 | Payout reliability | thread | payouts for the 18 Sep batch don't match settlement totals, anyone seen this? | https://the-glider.slack.com/archives/C0C7U7L87MM/p1791641890360289 |  |
 | slack | 2026-10-10 | (unlinked) | thread | I keep getting a null pointer in the retry worker, not sure how to debug it. | https://the-glider.slack.com/archives/C0C7U7L87MM/p1791641945332839 |  |
 | slack | 2026-10-10 | (unlinked) | thread | how do we run the payouts service locally with the sandbox gateway? | https://the-glider.slack.com/archives/C0C7U7L87MM/p1791641991634509 |  |
 | slack | 2026-10-10 | Payout reliability | thread | PAY-1 idempotency keys are live in staging. AUTH-2 reopened after the rate limiter blocked... | https://the-glider.slack.com/archives/C0C7U7L87MM/p1791642029600679 |  |

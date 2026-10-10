@@ -1,13 +1,11 @@
 
-  engineering-contribution-memory@0.1.0  run grt_…b2S8 · 26 tools declared
+  engineering-contribution-memory@0.1.0  run grt_…BxFw · 26 tools declared
 
-  ● load                                           0.0s
-  ● fetch                                          0.0s
-  ● analyse                                       18.2s
-    ◆ openai/gpt-6-luna                            6.2s
-    ◆ openai/gpt-6-luna                            9.2s
-  ● render                                         0.0s
-  ● persist                                        0.0s
+  ● load                                          0.0s
+  ● fetch                                         0.0s
+  ● analyse                                       3.0s
+  ● render                                        0.0s
+  ● persist                                       0.0s
   ╭─ result ───────────────────────────────────────────────────────────────────────────────╮
   │ title                 Evidence gaps - Pskuntal1248                                     │
   │ mode                  evidence_gaps                                                    │
@@ -28,10 +26,10 @@
   │ Communicates status and risks to stakeholders without being asked            missing   │
   │ Reduces recurring team toil through tooling or process improvements          missing   │
   │ notes                                                                                  │
-  │ • topic grouping used embeddings (1 calls to the Gravity endpoint) plus keywords       │
+  │ • topic grouping used embeddings (1 call to the Gravity endpoint) plus keywords        │
   │ ledger_rows           38                                                               │
-  │ model_calls           2                                                                │
-  │ seconds               18.2                                                             │
+  │ model_calls           1                                                                │
+  │ seconds               3.0                                                              │
   │ new_items             0                                                                │
   │ docs_sources_asked                                                                     │
   │ • confluence                                                                           │
@@ -46,4 +44,4 @@
   │ page_chars            2416                                                             │
   ╰────────────────────────────────────────────────────────────────────────────────────────╯
 
-  ✓ Done in 23.3s  
+  ✓ Done in 8.0s  

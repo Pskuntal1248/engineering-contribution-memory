@@ -1,13 +1,11 @@
 
-  engineering-contribution-memory@0.1.0  run grt_…8jXQ · 26 tools declared
+  engineering-contribution-memory@0.1.0  run grt_…OsR8 · 26 tools declared
 
-  ● load                                           0.0s
-  ● fetch                                          0.0s
-  ● analyse                                       18.0s
-    ◆ openai/gpt-6-luna                            4.9s
-    ◆ openai/gpt-6-luna                            9.5s
-  ● render                                         0.0s
-  ● persist                                        0.0s
+  ● load                                          0.0s
+  ● fetch                                         0.0s
+  ● analyse                                       3.0s
+  ● render                                        0.0s
+  ● persist                                       0.0s
   ╭─ result ───────────────────────────────────────────────────────────────────────────────╮
   │ title                 1:1 talking points - Pskuntal1248                                │
   │ mode                  one_on_one                                                       │
@@ -18,11 +16,11 @@
   │ invisible_work        3                                                                │
   │ decisions             3                                                                │
   │ notes                                                                                  │
-  │ • topic grouping used embeddings (1 calls to the Gravity endpoint) plus keywords       │
+  │ • topic grouping used embeddings (1 call to the Gravity endpoint) plus keywords        │
   │ • no review framework given: evidence gaps skipped; a framework would enable them      │
   │ ledger_rows           38                                                               │
-  │ model_calls           2                                                                │
-  │ seconds               18.1                                                             │
+  │ model_calls           1                                                                │
+  │ seconds               3.0                                                              │
   │ new_items             0                                                                │
   │ docs_sources_asked                                                                     │
   │ • confluence                                                                           │
@@ -39,7 +37,7 @@
   │ • Decision needing input                                                               │
   │ • What could not be done                                                               │
   │ • Appendix: item ledger (also the CSV download)                                        │
-  │ page_chars            4125                                                             │
+  │ page_chars            4168                                                             │
   ╰────────────────────────────────────────────────────────────────────────────────────────╯
 
-  ✓ Done in 22.9s  
+  ✓ Done in 7.9s  

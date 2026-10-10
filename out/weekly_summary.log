@@ -1,13 +1,11 @@
 
-  engineering-contribution-memory@0.1.0  run grt_…Ye6k · 26 tools declared
+  engineering-contribution-memory@0.1.0  run grt_…_Rp8 · 26 tools declared
 
-  ● load                                           0.0s
-  ● fetch                                          0.0s
-  ● analyse                                       18.2s
-    ◆ openai/gpt-6-luna                            4.4s
-    ◆ openai/gpt-6-luna                           10.9s
-  ● render                                         0.0s
-  ● persist                                        0.0s
+  ● load                                          0.0s
+  ● fetch                                         0.0s
+  ● analyse                                       2.9s
+  ● render                                        0.0s
+  ● persist                                       0.0s
   ╭─ result ───────────────────────────────────────────────────────────────────────────────╮
   │ title                 Weekly summary - Pskuntal1248                                    │
   │ mode                  weekly_summary                                                   │
@@ -18,11 +16,11 @@
   │ invisible_work        3                                                                │
   │ decisions             3                                                                │
   │ notes                                                                                  │
-  │ • topic grouping used embeddings (1 calls to the Gravity endpoint) plus keywords       │
+  │ • topic grouping used embeddings (1 call to the Gravity endpoint) plus keywords        │
   │ • no review framework given: evidence gaps skipped; a framework would enable them      │
   │ ledger_rows           38                                                               │
-  │ model_calls           2                                                                │
-  │ seconds               18.2                                                             │
+  │ model_calls           1                                                                │
+  │ seconds               2.9                                                              │
   │ new_items             0                                                                │
   │ docs_sources_asked                                                                     │
   │ • confluence                                                                           │
@@ -40,7 +38,7 @@
   │ • Help given                                                                           │
   │ • What could not be done                                                               │
   │ • Appendix: item ledger (also the CSV download)                                        │
-  │ page_chars            3341                                                             │
+  │ page_chars            3418                                                             │
   ╰────────────────────────────────────────────────────────────────────────────────────────╯
 
-  ✓ Done in 23.0s  
+  ✓ Done in 7.8s  

@@ -39,19 +39,19 @@ I shipped this on 2026-10-10. What it did: Sessions expired in the middle of che
 
 **payouts for the 18 Sep batch don't match settlement totals, anyone seen this?**
 
-I debugged and fixed a problem in #uc10-test on 2026-10-10, with no ticket raised: I traced the payout mismatch to the UTC day window conflicting with IST settlement, fixed the window to use the merchant timezone, and reran the batch with matching totals.
+I debugged and fixed a problem in #uc10-test on 2026-10-10, with no ticket raised: I traced the payout mismatch to a UTC day window conflicting with settlement's IST window, fixed the timezone handling, and reran the batch with matching totals.
 
 [Source: Slack conversation](https://the-glider.slack.com/archives/C0C7U7L87MM/p1791641890360289)
 
 **I keep getting a null pointer in the retry worker, not sure how to debug it.**
 
-I mentored a teammate in #uc10-test on 2026-10-10, with no ticket raised: I guided retry-worker debugging by suggesting payload logging and tracing how the retry path rebuilds the job.
+I mentored a teammate in #uc10-test on 2026-10-10, with no ticket raised: I guided someone to log the retry job payload and trace how the retry path rebuilds it, revealing that the payload lacked a merchant_id.
 
 [Source: Slack conversation](https://the-glider.slack.com/archives/C0C7U7L87MM/p1791641945332839)
 
 **how do we run the payouts service locally with the sandbox gateway?**
 
-I helped a teammate in #uc10-test on 2026-10-10, with no ticket raised: I explained how to run the payouts service locally with the sandbox gateway and offered to document the setup in the README.
+I helped a teammate in #uc10-test on 2026-10-10, with no ticket raised: I explained how to run the payouts service locally with the sandbox gateway and said I would add the instructions to the README.
 
 [Source: Slack conversation](https://the-glider.slack.com/archives/C0C7U7L87MM/p1791641991634509)
 
@@ -69,13 +69,13 @@ This ticket was reopened 1 time(s).
 
 **Design: Search ranking approach**
 
-I led this. We will use BM25 with field-weighted scoring (title x3, body x1) plus a recency boost, implemented under SRCH-2.
+I led this. We will use BM25 with title-weighted scoring, body scoring, and a recency boost for search ranking.
 
 [Source: doc](https://pskuntal2005.atlassian.net/wiki/spaces/UTD/pages/229377/Design+Search+ranking+approach+UC10+TEST+DATA)
 
 **Design: Payout reconciliation job**
 
-I led this. The decision is to run reconciliation nightly as a queue-backed job.
+I led this. The accepted design decides to run reconciliation nightly as a queue-backed job instead of a cron script.
 
 [Source: doc](https://app.notion.com/p/Design-Payout-reconciliation-job-UC10-TEST-DATA-3f5d2067fa9c80e1ba57f18448a1a6a5)
 
@@ -131,7 +131,7 @@ I led this. Proposes: move outbound webhooks to the platform team shared queue. 
 | jira | 2026-10-10 | Session token refresh and login rate limiting | ticket | AUTH-1: Add session token refresh [TEST DATA] | https://pskuntal2005.atlassian.net/browse/AUTH-1 |  |
 | jira | 2026-10-10 | Session token refresh and login rate limiting | ticket | AUTH-2: Add login rate limiter [TEST DATA] | https://pskuntal2005.atlassian.net/browse/AUTH-2 |  |
 | doc | 2026-10-10 | Payout reliability | doc | Design: Payout reconciliation job [UC10 TEST DATA] | https://app.notion.com/p/Design-Payout-reconciliation-job-UC10-TEST-DATA-3f5d2067fa9c80e1ba57f18448a1a6a5 |  |
-| slack | 2026-10-10 | (unlinked) | thread | payouts for the 18 Sep batch don't match settlement totals, anyone seen this? | https://the-glider.slack.com/archives/C0C7U7L87MM/p1791641890360289 |  |
+| slack | 2026-10-10 | Payout reliability | thread | payouts for the 18 Sep batch don't match settlement totals, anyone seen this? | https://the-glider.slack.com/archives/C0C7U7L87MM/p1791641890360289 |  |
 | slack | 2026-10-10 | (unlinked) | thread | I keep getting a null pointer in the retry worker, not sure how to debug it. | https://the-glider.slack.com/archives/C0C7U7L87MM/p1791641945332839 |  |
 | slack | 2026-10-10 | (unlinked) | thread | how do we run the payouts service locally with the sandbox gateway? | https://the-glider.slack.com/archives/C0C7U7L87MM/p1791641991634509 |  |
 | slack | 2026-10-10 | Payout reliability | thread | PAY-1 idempotency keys are live in staging. AUTH-2 reopened after the rate limiter blocked... | https://the-glider.slack.com/archives/C0C7U7L87MM/p1791642029600679 |  |

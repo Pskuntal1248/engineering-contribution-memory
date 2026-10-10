@@ -1,13 +1,11 @@
 
-  engineering-contribution-memory@0.1.0  run grt_…OxgI · 26 tools declared
+  engineering-contribution-memory@0.1.0  run grt_…rxUM · 26 tools declared
 
-  ● load                                           0.0s
-  ● fetch                                          0.0s
-  ● analyse                                       17.8s
-    ◆ openai/gpt-6-luna                            6.5s
-    ◆ openai/gpt-6-luna                            8.5s
-  ● render                                         0.0s
-  ● persist                                        0.0s
+  ● load                                          0.0s
+  ● fetch                                         0.0s
+  ● analyse                                       2.8s
+  ● render                                        0.0s
+  ● persist                                       0.0s
   ╭─ result ───────────────────────────────────────────────────────────────────────────────╮
   │ title                 Review material - Pskuntal1248                                   │
   │ mode                  review_material                                                  │
@@ -18,11 +16,11 @@
   │ invisible_work        3                                                                │
   │ decisions             3                                                                │
   │ notes                                                                                  │
-  │ • topic grouping used embeddings (1 calls to the Gravity endpoint) plus keywords       │
+  │ • topic grouping used embeddings (1 call to the Gravity endpoint) plus keywords        │
   │ • no review framework given: evidence gaps skipped; a framework would enable them      │
   │ ledger_rows           38                                                               │
-  │ model_calls           2                                                                │
-  │ seconds               17.9                                                             │
+  │ model_calls           1                                                                │
+  │ seconds               2.9                                                              │
   │ new_items             0                                                                │
   │ docs_sources_asked                                                                     │
   │ • confluence                                                                           │
@@ -35,7 +33,7 @@
   │ • Impact statements 2026-09-01 to 2026-10-31                                           │
   │ • What could not be done                                                               │
   │ • Appendix: item ledger (also the CSV download)                                        │
-  │ page_chars            5362                                                             │
+  │ page_chars            5573                                                             │
   ╰────────────────────────────────────────────────────────────────────────────────────────╯
 
-  ✓ Done in 22.7s  
+  ✓ Done in 7.9s  
