@@ -18,7 +18,7 @@ from guards import ToolLog, budget_for, internal_terms, parse_channels
 from models import Item
 from pipeline import Config, ingest
 from sources import GatewaySource, Source
-from store import NativeMemoryStore, ProfileStore
+from store import NativeMemoryStore, PlatformStore, ProfileStore, platform_store
 from weekly import new_items, next_cursors, quiet_week_line, since_for, id_key
 
 ON_DEMAND = {"weekly_summary", "one_on_one", "review_material", "interview_stories", "evidence_gaps"}
@@ -49,9 +49,15 @@ def _payload(raw: Any) -> Any:
 class Deps:
     """Everything the graph needs from outside. Tests pass fixtures and a fake model; graph() passes the gateway."""
 
-    def __init__(self, source_factory, llm=None, store_factory=None, now=None):
-        self.source_factory, self.llm, self.store_factory = source_factory, llm, store_factory
+    def __init__(self, source_factory, llm=None, store_factory=None, now=None, embedder=None):
+        self.source_factory, self.llm, self.store_factory, self.embedder = source_factory, llm, store_factory, embedder
         self.now = now or (lambda: datetime.now(timezone.utc))
+
+
+def _docs_sources(raw: str) -> list[str]:
+    if raw.strip().lower() == "all three":
+        return ["confluence", "notion", "google drive"]
+    return [d.lower() for d in (x.strip() for x in raw.replace("+", ",").split(",")) if d and d.lower() != "none"]
 
 
 def _cfg(inp: dict) -> Config:
@@ -59,6 +65,7 @@ def _cfg(inp: dict) -> Config:
     return Config(
         username=user, repos=[r.strip() for r in str(inp.get("repos_or_org", "")).replace("\n", ",").split(",") if r.strip()],
         jira_site=str(inp.get("jira_site", "")), jira_projects=[p.strip().upper() for p in str(inp.get("jira_projects", "")).replace("\n", ",").split(",") if p.strip()],
+        docs_sources=_docs_sources(str(inp.get("docs_source", ""))),
         slack_channels=parse_channels(str(inp.get("slack_channels", ""))), include_dms=str(inp.get("include_dms", "No")).lower() in {"yes", "true"},
         slack_user_ids=set(parse_channels(str(inp.get("slack_user_ids", "")))), name_hints=[user, *parse_channels(str(inp.get("display_name", "")))],
     )
@@ -67,15 +74,20 @@ def _cfg(inp: dict) -> Config:
 def make_graph(deps: Deps):
     async def load(state: State) -> dict:
         inp = state.get("inputs", {})
-        store: ProfileStore = deps.store_factory(state.get("memory")) if deps.store_factory else NativeMemoryStore(state.get("memory"), 256)
-        prior = store.load()
+        mem = state.get("memory")
+        if deps.store_factory:
+            store = deps.store_factory(mem)
+        else:
+            ps = platform_store()
+            store = PlatformStore(ps, mem) if ps is not None else NativeMemoryStore(mem, 256)
+        prior = await store.aload() if hasattr(store, "aload") else store.load()
         req = str(inp.get("request") or "auto")
         has_memory = bool(prior.get("items") or prior.get("last_run"))  # an empty but completed run still counts
         if req == "auto":
             req = "weekly" if prior.get("backfill_done") else "backfill"  # weekly only after a backfill really completed
         if req in ON_DEMAND and not has_memory:
             req = "backfill"  # nothing to report from yet
-        return {"ctx": {"mode": req, "prior": prior, "store": store, "notes": ["memory was unreadable, starting fresh"] if prior.get("_corrupt") else []}}
+        return {"ctx": {"mode": req, "prior": prior, "store": store, "notes": ["memory was unreadable, starting fresh"] if prior.get("_corrupt") else (["the saved history was missing from the store, so this run backfills again"] if prior.get("_store_empty") else [])}}
 
     async def fetch(state: State) -> dict:
         ctx = state["ctx"]
@@ -124,7 +136,7 @@ def make_graph(deps: Deps):
         ctx["items"], ctx["new_ids"], ctx["failed"] = items, new_ids, failed
         prof = await eprofile.build(items, username=cfg.username, names=names, llm=deps.llm, budget=budget,
                                     framework=str(inp.get("review_framework", "") or ""), role_and_level=str(inp.get("role_and_level", "")),
-                                    prior=prior, repo_aliases=cfg.repo_aliases)
+                                    prior=prior, repo_aliases=cfg.repo_aliases, embedder=deps.embedder)
         notes += prof["notes"]
         ctx["prof"], ctx["notes"], ctx["budget"] = prof, notes, budget
         return {"ctx": ctx}
@@ -168,7 +180,7 @@ def make_graph(deps: Deps):
             "gaps": [{"id": g["id"], "status": g["status"]} for g in prof["gaps"]],
         }
         store = ctx["store"]
-        memory = store.dump(profile)
+        memory = await store.adump(profile) if hasattr(store, "adump") else store.dump(profile)
         # memory is written only here, after the work above succeeded
         return {"memory": memory}
 
@@ -199,8 +211,10 @@ async def graph():
 
     has = {k.replace("_", ".", 1) for k in tools}
     llm = GatewayLLM(os.environ["GRAVITY_LLM_URL"], token)
+    from embed import GatewayEmbedder
+    embedder = GatewayEmbedder(os.environ["GRAVITY_LLM_URL"], token)
 
     def source_factory(cfg: Config):
-        return GatewaySource(call, cfg.username, cfg.repos, cfg.slack_channels, cfg.include_dms, cfg.jira_projects, has)
+        return GatewaySource(call, cfg.username, cfg.repos, cfg.slack_channels, cfg.include_dms, cfg.jira_projects, has, cfg.docs_sources)
 
-    return make_graph(Deps(source_factory, llm))
+    return make_graph(Deps(source_factory, llm, embedder=embedder))
