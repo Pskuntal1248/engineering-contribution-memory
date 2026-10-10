@@ -135,7 +135,8 @@ def make_graph(deps: Deps):
                 why: dict[str, int] = {}
                 for sk in ing.skipped:
                     why[sk.reason] = why.get(sk.reason, 0) + 1
-                notes.append(f"{len(ing.skipped)} rows not counted: " + "; ".join(f"{n} x {r}" for r, n in sorted(why.items(), key=lambda kv: -kv[1])))
+                top = sorted(why.items(), key=lambda kv: -kv[1])
+                notes.append(f"{len(ing.skipped)} rows not counted: " + "; ".join(f"{n} x {r}" for r, n in top[:4]) + (f"; {len(top) - 4} other reasons" if len(top) > 4 else "") + ".")
             if ing.not_found_channels:
                 known = {f.get("source") for f in failed}
                 failed += [{"source": f"slack:#{c}", "error": "channel not found"} for c in ing.not_found_channels if f"slack:#{c}" not in known]
