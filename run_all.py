@@ -175,6 +175,47 @@ def check_mode(name, md, res, wall, code, log, limit_s, limit_calls):
     return ok, fails
 
 
+def decision_lines(md):
+    out = set()
+    for m in re.finditer(r"(?m)^(?:My role: \w+\.|I \w+ this\.|Decision \(\w+\):)\s*(.+)$", md):
+        out.add(re.sub(r"\s*The source says this still needs a decision\.\s*$", "", m.group(1)).strip())
+    return out
+
+
+def project_names(name):
+    p = OUT / f"{name}.csv"
+    if not p.is_file():
+        return set(), 0
+    import csv
+    rows = list(csv.reader(p.open(encoding="utf-8")))[1:]
+    return {r[2] for r in rows if len(r) > 2 and r[2] not in ("(unlinked)", "(other work)")}, sum(1 for r in rows if len(r) > 2 and r[2] == "(unlinked)")
+
+
+def cross_checks(names):
+    """The same project names and the same decision wording in every mode, and the same items grouped into projects."""
+    ok, fails = {}, []
+    base_names, base_unlinked = project_names("backfill")
+    base_dec = decision_lines((OUT / "backfill.md").read_text(encoding="utf-8")) if (OUT / "backfill.md").is_file() else set()
+    bad_names, bad_dec, bad_unl = [], [], []
+    for n in names:
+        if n == "backfill":
+            continue
+        pn, un = project_names(n)
+        if pn and pn != base_names:
+            bad_names.append(f"{n}: {sorted(pn - base_names)} vs backfill {sorted(base_names - pn)}")
+        if pn and un != base_unlinked:
+            bad_unl.append(f"{n}: {un} unlinked rows vs backfill {base_unlinked}")
+        md = (OUT / f"{n}.md").read_text(encoding="utf-8") if (OUT / f"{n}.md").is_file() else ""
+        extra = decision_lines(md) - base_dec
+        if extra:
+            bad_dec.append(f"{n}: {sorted(extra)[:1]}")
+    for label, bad in (("same project names in every mode", bad_names), ("same decision wording in every mode", bad_dec), ("same items in projects in every mode", bad_unl)):
+        ok[label] = not bad
+        if bad:
+            fails.append(f"[all modes] {label}: " + " | ".join(bad)[:300])
+    return ok, fails
+
+
 def main():
     OUT.mkdir(exist_ok=True)
     check_only = "--check-only" in sys.argv
@@ -204,6 +245,9 @@ def main():
         if name == "backfill" and not md and not check_only:
             print("backfill produced no output; later modes need it, stopping", flush=True)
             break
+    cok, cfails = cross_checks([n for n, *_ in rows])
+    rows.append(("consistency", cok, {}, 0.0))
+    all_fails += cfails
     print("\nUC-10 end-to-end check\n")
     print(f"{'run':<18}{'checks':<9}{'result':<7}{'seconds':<9}calls")
     for name, ok, res, wall in rows:
