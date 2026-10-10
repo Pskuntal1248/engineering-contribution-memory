@@ -93,6 +93,18 @@ def _fname(f: dict[str, Any]) -> str:
     return str(f.get("filename") or f.get("path") or f.get("name") or f.get("file") or "")
 
 
+_DOCISH = re.compile(r"(^|/)(docs?|adrs?|rfcs?|decisions?)/|\.(md|rst|txt|adoc)$", re.I)
+_DOC_TITLE = re.compile(r"^\s*(docs?|documentation)(\([^)]*\))?\s*:|\bADR-\d+|\bRFC[- ]?\d*\b", re.I)
+
+
+def docs_only_pr(raw_files: list[dict[str, Any]] | None, title: str) -> bool:
+    """A PR that only adds or edits documentation or an ADR/RFC: a proposal, not shipped code."""
+    names = [_fname(f) for f in (raw_files or []) if isinstance(f, dict) and _fname(f)]
+    if names:
+        return all(_DOCISH.search(n) for n in names)
+    return bool(_DOC_TITLE.search(title or ""))
+
+
 def _generated_only(raw: dict[str, Any], size: dict[str, int], title: str, body: str) -> bool:
     """True when the PR changes only lockfiles/generated files. Uses the file list; when the list is missing or empty
     (lookup failed or capped) falls back to the title and body saying lockfile."""
@@ -168,7 +180,8 @@ def normalize_pr(raw: dict[str, Any], repo: str, username: str, projects: Iterab
             "merged_flag": bool(merged), "state": raw.get("state", ""), "size": size, "branch": head,
             "cycle_hours": round((cd - cr).total_seconds() / 3600, 1) if cd and cr and merged else None,
             "is_revert": rev is not None, "reverts": rev, "labels": labels,
-            "generated_only": _generated_only(raw, size, title, body),  # lockfile / generated / vendored files only
+            "generated_only": _generated_only(raw, size, title, body),
+            "docs_only": docs_only_pr(raw.get("files"), title),  # lockfile / generated / vendored files only
             "paths": [_fname(f) for f in (raw.get("files") or []) if isinstance(f, dict) and _fname(f)][:15],
             "merged_basis": raw.get("_merged_basis", "merged_at" if merged else ""),
             "mine": author.lower() == username.lower() or username.lower() in [c.lower() for c in co],
