@@ -90,39 +90,34 @@ def _stem(w: str) -> str:
     return w
 
 
+_OPENER = re.compile(r"\?|\b(anyone|any idea|not sure|stuck|can someone|does anyone|how (do|can|should|to)|why (is|does|do)|i keep getting)\b", re.I)
+
+
 def merge_threads(items: list[Item], gap_minutes: int = 10) -> list[Item]:
-    """Flat Slack messages that are one conversation become one item. Each message is compared only with the message right before
-    it (never with a growing group, which chains different topics together). It continues that conversation when: same channel and
-    DM-ness, overlapping participant, at most `gap_minutes` later, no conflicting ticket keys, and it shares two words, or one specific word
-    (6+ letters, in at most half of the channel's messages). Real threads are already one item each."""
+    """Flat Slack messages that are one conversation become one item. Word overlap is too weak to find topic boundaries (replies often
+    share no words with the question), so boundaries come from structure instead. A message STARTS a new conversation when it:
+    is a question or help request, or arrives more than `gap_minutes` after the last one, or has ticket keys when the group has none
+    (or the reverse, or different keys), or comes from a different channel / DM-ness / person. Anything else continues the
+    conversation, provided it is within 2 minutes or shares a word with it. When unsure the messages stay separate."""
     from datetime import datetime
 
     def when(i: Item) -> float:
         return datetime.fromisoformat(i.date.replace("Z", "+00:00")).timestamp()
     threads = sorted((i for i in items if i.type == "thread"), key=lambda i: (i.meta.get("channel_id", ""), i.date, i.id))
     rest = [i for i in items if i.type != "thread"]
-    toks = {i.id: {_stem(w) for w in _toks_clean(i.text)} for i in threads}
-    per_channel: dict[str, list[str]] = {}
-    for i in threads:
-        per_channel.setdefault(i.meta.get("channel_id", ""), []).append(i.id)
-    common: dict[str, set[str]] = {}
-    for ch, ids in per_channel.items():
-        freq: dict[str, int] = {}
-        for k in ids:
-            for w in toks[k]:
-                freq[w] = freq.get(w, 0) + 1
-        common[ch] = {w for w, c in freq.items() if len(ids) >= 5 and c / len(ids) > 0.5}
     groups: list[list[Item]] = []
     for it in threads:
         last = groups[-1][-1] if groups else None
         if last and last.meta.get("channel_id") == it.meta.get("channel_id") and bool(last.meta.get("is_dm")) == bool(it.meta.get("is_dm")):
-            gap = (when(it) - when(last)) / 60
+            gap_min = (when(it) - when(last)) / 60
             same_people = bool(set(last.meta.get("participants", [])) & set(it.meta.get("participants", [])))
-            ka, kb = set(last.keys), set(it.keys)
-            keys_ok = not ka or not kb or bool(ka & kb)
-            shared = toks[last.id] & toks[it.id]
-            rare = shared - common.get(it.meta.get("channel_id", ""), set())
-            if gap <= gap_minutes and same_people and keys_ok and (len(shared) >= 2 or any(len(w) >= 6 for w in rare)):
+            ka = set().union(*(set(x.keys) for x in groups[-1]))
+            kb = set(it.keys)
+            keys_ok = (not ka and not kb) or bool(ka & kb)
+            body = "\n".join(l.split(": ", 1)[1] if ": " in l[:40] else l for l in it.text.splitlines())
+            opener = bool(_OPENER.search(body))
+            shared = {_stem(w) for w in _toks_clean(last.text)} & {_stem(w) for w in _toks_clean(it.text)}
+            if gap_min <= gap_minutes and same_people and keys_ok and not opener and (gap_min <= 2 or shared):
                 groups[-1].append(it)
                 continue
         groups.append([it])
@@ -184,6 +179,7 @@ def ingest(raw: dict[str, Any], cfg: Config, log: ToolLog | None = None) -> Inge
         take(x)
     for t in raw.get("jira", []):
         take(N.normalize_ticket(t, cfg.jira_site, cfg.name_hints))
+    gap_burst = 600.0
     channels = raw.get("slack", {}).get("channels", [])
     picked, missing = channels_to_read(channels, cfg.slack_channels, cfg.include_dms, log)
     allowed = {c["id"] for c in picked}
@@ -195,11 +191,19 @@ def ingest(raw: dict[str, Any], cfg: Config, log: ToolLog | None = None) -> Inge
             continue
         if log is not None:
             log.add("slack.read_history", channel=th["channel_id"], is_dm=th["channel_id"] in dm_ids)
-        x = N.normalize_thread(names[th["channel_id"]], th["channel_id"], th["messages"], cfg.slack_user_ids | set(raw.get("slack", {}).get("my_user_ids", [])),
-                           raw.get("slack", {}).get("permalink_base", ""))
-        if isinstance(x, Item):
-            x.meta["is_dm"] = th["channel_id"] in dm_ids
-        take(x)
+        uids = cfg.slack_user_ids | set(raw.get("slack", {}).get("my_user_ids", []))
+        base = raw.get("slack", {}).get("permalink_base", "")
+        msgs = th["messages"]
+        tss = sorted(float(m.get("ts", 0) or 0) for m in msgs)
+        # a "thread" whose messages all fall within a few minutes is chat posted in a burst that opens 3 or more separate questions; each message goes to merge_threads,
+        # which splits it by topic. Longer real threads stay one item.
+        openers = sum(1 for m in msgs if _OPENER.search(str(m.get("text", ""))))
+        parts = [[m] for m in msgs] if len(msgs) >= 2 and (tss[-1] - tss[0]) <= gap_burst and openers >= 3 else [msgs]
+        for part in parts:
+            x = N.normalize_thread(names[th["channel_id"]], th["channel_id"], part, uids, base)
+            if isinstance(x, Item):
+                x.meta["is_dm"] = th["channel_id"] in dm_ids
+            take(x)
     for d in raw.get("docs", []):
         take(N.normalize_doc(d, d.get("_source", "confluence"), cfg.name_hints))
 
@@ -209,7 +213,7 @@ def ingest(raw: dict[str, Any], cfg: Config, log: ToolLog | None = None) -> Inge
     items = merge_threads(items)
     for i in items:  # nothing disappears silently: messages folded into another item are listed with the reason
         for mid in i.meta.get("merged_ids", []):
-            skipped.append(Skipped(mid, f"merged into the same conversation as {i.title!r}"))
+            skipped.append(Skipped(mid, "message folded into the same Slack conversation"))
     N.mark_reverted([i for i in items if i.type == "pr"])
     N.mark_reverted_commits([i for i in items if i.type == "commit"])
     counts: dict[str, int] = {}
