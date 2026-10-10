@@ -21,7 +21,7 @@ _COMPILED = {k: (label, [re.compile(p, re.I) for p in pats]) for k, (label, pats
 
 
 def shipped(item: Item) -> bool:
-    return item.type == "pr" and bool(item.meta.get("merged_flag")) and not item.meta.get("reverted") and not item.meta.get("is_revert") and not item.meta.get("generated_only")
+    return item.type == "pr" and bool(item.meta.get("merged_flag")) and not item.meta.get("reverted") and not item.meta.get("is_revert") and not item.meta.get("generated_only") and not item.meta.get("docs_only")
 
 
 def contribution_size(item: Item) -> int:
