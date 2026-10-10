@@ -420,3 +420,17 @@ def test_design_doc_expectation_ignores_non_design_docs():
     d = Item(id="d1", source="doc", type="doc", date="2026-10-10T00:00:00Z", title="Design: Search ranking approach", text="x", meta={"mine": True})
     r = Item(id="d2", source="doc", type="doc", date="2026-10-10T00:00:00Z", title="Payout incident review", text="x", meta={"mine": True})
     assert map_evidence(Expectation("E1", "next", "Writes clear design docs"), [d, r]) == ["d1"]
+
+
+def test_decision_voice_covers_imperative_and_proposes_forms():
+    from guards import decision_voice
+    assert decision_voice("Use BM25 with a recency boost.") == "We will use BM25 with a recency boost."
+    assert decision_voice("Proposes: move webhooks to a queue.") == "We propose to move webhooks to a queue."
+    assert decision_voice("We will keep cron.") == "We will keep cron."
+
+
+def test_help_given_threads_count_toward_mentoring_expectation():
+    from ladder import Expectation, map_evidence
+    from models import Item
+    t = [Item(id=f"t{n}", source="slack", type="thread", date="2026-10-10T00:00:00Z", title="q", text="x", meta={"label": lab}) for n, lab in ((1, "mentoring"), (2, "help_given"), (3, "problem_solved"))]
+    assert map_evidence(Expectation("E1", "next", "Mentors junior engineers"), t) == ["t1", "t2"]
