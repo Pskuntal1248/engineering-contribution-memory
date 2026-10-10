@@ -38,7 +38,9 @@ def parse_framework(text: str, current_level: str, next_level: str | None = None
             out.append(Expectation(f"E{len(out)+1}", section, t))
         else:
             h = re.sub(r"\W+", "", line.lower())
-            if cur and cur in h:
+            if cur and cur in h and re.search(r"\bto\b", line, re.I):
+                section = "next"  # "Software Engineer to Senior Software Engineer expectations": what the next level asks
+            elif cur and cur in h:
                 section = "current"
             elif (nxt and nxt in h) or "nextlevel" in h or "promotion" in h:
                 section = "next"
