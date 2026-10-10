@@ -196,7 +196,7 @@ def find_decisions(items: list[Item], display_names: set[str], username: str,
             continue
         v = (verdicts or {}).get(it.id)
         if not is_strong_decision(it):
-            ok = v.is_decision if v is not None else (it.type == "pr" or bool(_DECISION.search(it.text)))
+            ok = v.is_decision if v is not None else (it.type == "pr" or bool(_DECISION.search(it.text)) or bool(it.meta.get("decision_text")))
             if not ok:
                 continue
         author_is_me = it.author in display_names or it.author.lower() == username.lower()
