@@ -248,3 +248,37 @@ def test_adr_pr_counts_even_if_the_model_says_no_and_threads_alone_are_not_proje
                author=ME, meta={"mine": True, "my_messages": 2, "channel": "general", "participants": [ME]}) for i in range(1, 4)]
     prof = asyncio.run(build(th, username=ME, names={ME}, llm=None, budget=budget_for("backfill"), framework="", role_and_level="", prior=None))
     assert prof["projects"] == [] and prof["project_of"] == {}
+
+
+def test_slack_lists_private_channels_with_paging_and_names_the_cause_once():
+    calls = []
+
+    class Slack(Gateway):
+        async def __call__(self, name, args):
+            if name == "slack.list_channels":
+                calls.append(args)
+                if not args.get("cursor"):
+                    return {"data": {"channels": [{"id": "C1", "name": "general"}], "response_metadata": {"next_cursor": "p2"}}}
+                return {"data": {"channels": [{"id": "G9", "name": "uc10-test", "is_private": True, "is_member": True}], "response_metadata": {"next_cursor": ""}}}
+            return await super().__call__(name, args)
+
+    def run(chans, gw):
+        src = GatewaySource(gw, ME, [], parse_channels(chans), False, ["PAY"], HAS, [], ["Parth Singh"])
+        return asyncio.run(src.fetch(SINCE, None, ToolLog()))
+
+    out = run("#uc10-test", Slack())
+    assert [c["id"] for c in out["slack"]["channels"]] == ["C1", "G9"] and len(calls) == 2
+    assert "private_channel" in calls[0]["types"] and "im" not in calls[0]["types"].split(",") and calls[0]["limit"] == 1000
+    assert not [f for f in out["failed"] if f["source"].startswith("slack:#")]
+    miss = run("#nope", Slack())
+    errs = [f for f in miss["failed"] if f["source"] == "slack:#nope"]
+    assert len(errs) == 1 and "not in the channel list" in errs[0]["error"] and "member" in errs[0]["error"]
+
+    class NotMember(Gateway):
+        async def __call__(self, name, args):
+            if name == "slack.list_channels":
+                return {"channels": [{"id": "G9", "name": "uc10-test", "is_private": True, "is_member": False}]}
+            return await super().__call__(name, args)
+
+    nm = run("uc10-test", NotMember())
+    assert any("not a member" in f["error"] for f in nm["failed"])
