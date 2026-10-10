@@ -24,6 +24,8 @@ def counted_label(it: Item) -> str:
             return "revert (not counted)"
         if it.meta.get("reverted"):
             return "reverted (not shipped)"
+        if it.meta.get("docs_only"):
+            return "documentation or proposal only (not counted as shipped)"
         if it.meta.get("generated_only"):
             return "generated or lockfile changes only (not counted)"
         return "shipped" if shipped(it) else "open or closed unmerged"
