@@ -54,12 +54,14 @@ class Gateway:
                                              "metadata": {"labels": {"results": [{"name": "confidential"}]}}}, "lastModified": "2026-08-06T00:00:00Z", "url": "/wiki/x/77"}]}
         if name == "confluence.get_page_by_id":
             return {"id": "77", "body": {"storage": {"value": "<p>We decided to move webhooks to a queue</p>"}}}
-        if name == "notion.get_about_user":
-            return {"id": "u-me"}
+        if name == "notion.list_users":
+            return {"data": {"response_data": {"results": [{"object": "user", "id": "u-me", "type": "person", "name": "Parth Singh"},
+                                                           {"object": "user", "id": "u-other", "type": "person", "name": "Other Person"},
+                                                           {"object": "user", "id": "u-bot", "type": "bot", "name": "Integration"}]}}}
         if name == "notion.search_notion_page":
-            return {"results": [{"id": "n1", "created_by": {"id": "u-me"}, "last_edited_by": {"id": "u-me"}, "last_edited_time": "2026-09-01T00:00:00Z", "created_time": "2026-09-01T00:00:00Z", "url": "https://notion.so/n1",
+            return {"data": {"response_data": {"results": [{"id": "n1", "created_by": {"id": "u-me"}, "last_edited_by": {"id": "u-me"}, "last_edited_time": "2026-09-01T00:00:00Z", "created_time": "2026-09-01T00:00:00Z", "url": "https://notion.so/n1",
                                  "properties": {"Name": {"type": "title", "title": [{"plain_text": "Design notes"}]}}},
-                                {"id": "n2", "created_by": {"id": "someone"}, "last_edited_by": {"id": "someone"}, "last_edited_time": "2026-09-02T00:00:00Z", "properties": {}}]}
+                                {"id": "n2", "created_by": {"id": "someone"}, "last_edited_by": {"id": "someone"}, "last_edited_time": "2026-09-02T00:00:00Z", "properties": {}}]}}}
         if name == "notion.get_page_markdown":
             return {"markdown": "# Design notes\nwe chose a queue"}
         if name == "drive.find_file":
@@ -79,13 +81,13 @@ class Gateway:
         raise RuntimeError("unexpected " + name)
 
 
-HAS = {"jira.search_issues", "jira.get_issue", "jira.list_issue_comments", "confluence.cql_search", "confluence.get_page_by_id", "notion.get_about_user", "notion.search_notion_page",
+HAS = {"jira.search_issues", "jira.get_issue", "jira.list_issue_comments", "confluence.cql_search", "confluence.get_page_by_id", "notion.list_users", "notion.search_notion_page",
        "notion.get_page_markdown", "drive.find_file", "drive.export_google_workspace_file", "slack.list_channels", "slack.read_history", "slack.search_messages",
        "slack.fetch_message_thread_from_a_conversation"}
 
 
 def fetch(gw, docs=("confluence", "notion", "google drive")):
-    src = GatewaySource(gw, ME, [], parse_channels("#payments-eng"), False, ["PAY"], HAS, list(docs))
+    src = GatewaySource(gw, ME, [], parse_channels("#payments-eng"), False, ["PAY"], HAS, list(docs), ["Parth Singh"])
     return asyncio.run(src.fetch(SINCE, None, ToolLog()))
 
 
@@ -131,7 +133,7 @@ def test_slack_search_stays_in_chosen_channels_and_reads_no_dms():
 def test_full_run_uses_platform_store_and_keeps_memory_small():
     gw = Gateway()
     store = InMemoryStore()
-    deps = agent.Deps(lambda cfg: GatewaySource(gw, cfg.username, cfg.repos, cfg.slack_channels, cfg.include_dms, cfg.jira_projects, HAS, cfg.docs_sources),
+    deps = agent.Deps(lambda cfg: GatewaySource(gw, cfg.username, cfg.repos, cfg.slack_channels, cfg.include_dms, cfg.jira_projects, HAS, cfg.docs_sources, cfg.name_hints),
                       llm=None, store_factory=lambda mem: PlatformStore(store, mem), now=lambda: NOW)
     inp = {"github_username": ME, "repos_or_org": "o/r", "jira_projects": "PAY", "slack_channels": "#payments-eng", "docs_source": "All three",
            "role_and_level": "Software Engineer", "display_name": "Parth Singh"}
@@ -197,3 +199,52 @@ def test_gateway_embedder_centres_and_fails_soft(monkeypatch):
     assert v == {} and "keywords" in notes[0]
     c = embed.center({"a": [1.0, 0.0], "b": [0.0, 1.0]})
     assert abs(embed.dense_cosine(c["a"], c["b"]) + 1.0) < 1e-9
+
+
+def test_notion_identity_by_name_solo_workspace_and_wrapped_shapes():
+    out = fetch(Gateway(), docs=("notion",))
+    assert [d["id"] for d in out["docs"]] == ["n1"] and out["docs"][0]["author"] == "Parth Singh"  # two people: only the user's own page, listed under the user's name
+    assert not out["failed"]
+
+    class Solo(Gateway):
+        async def __call__(self, name, args):
+            if name == "notion.list_users":
+                return {"results": [{"object": "user", "id": "u-only", "type": "person", "name": "Someone Else"}]}
+            return await super().__call__(name, args)
+
+    solo = fetch(Solo(), docs=("notion",))
+    assert len(solo["docs"]) == 2 and any("single-person" in c for c in solo["capped"])  # one person: every page is theirs
+
+    class Crowd(Gateway):
+        async def __call__(self, name, args):
+            if name == "notion.list_users":
+                return {"results": [{"object": "user", "id": "a", "type": "person", "name": "A B"}, {"object": "user", "id": "b", "type": "person", "name": "C D"}]}
+            return await super().__call__(name, args)
+
+    crowd = fetch(Crowd(), docs=("notion",))
+    assert crowd["docs"] == [] and "could not tell which of 2" in crowd["failed"][0]["error"]
+
+
+def test_rows_reads_wrapped_envelopes():
+    assert adapters.rows({"data": {"response_data": {"issues": [{"key": "A-1"}]}}}, "issues") == [{"key": "A-1"}]
+    assert adapters.find_key({"data": {"x": {"next_page_token": "t"}}}, "next_page_token") == "t"
+
+
+def test_adr_pr_counts_even_if_the_model_says_no_and_threads_alone_are_not_projects():
+    from analysis import DecisionVerdict, find_decisions
+    from models import Item
+    adr = Item(id="gh:pr:o/r#9", source="github", type="pr", date="2026-09-04T00:00:00Z", title="docs: ADR-001 move webhooks to a queue", text="Proposes ADR-001.", author=ME,
+               meta={"mine": True, "paths": ["docs/adr/001-webhook-queue.md"]})
+    no = {adr.id: DecisionVerdict(item_id=adr.id, is_decision=False, summary="nope")}
+    d = find_decisions([adr], {ME}, ME, no)
+    assert len(d) == 1 and d[0]["role"] == "led"
+    weak = Item(id="gh:pr:o/r#10", source="github", type="pr", date="2026-09-04T00:00:00Z", title="Proposal: new cache", text="x", author=ME, meta={"mine": True})
+    assert find_decisions([weak], {ME}, ME, {weak.id: DecisionVerdict(item_id=weak.id, is_decision=False, summary="")}) == []  # a weak candidate can be vetoed
+    # three similar Slack threads with no ticket, PR or doc: no project
+    import asyncio
+    from eprofile import build
+    from guards import budget_for
+    th = [Item(id=f"slack:C1:{i}", source="slack", type="thread", date=f"2026-09-0{i}T00:00:00Z", title="#general thread", text="settlement batch timezone bug fix",
+               author=ME, meta={"mine": True, "my_messages": 2, "channel": "general", "participants": [ME]}) for i in range(1, 4)]
+    prof = asyncio.run(build(th, username=ME, names={ME}, llm=None, budget=budget_for("backfill"), framework="", role_and_level="", prior=None))
+    assert prof["projects"] == [] and prof["project_of"] == {}
