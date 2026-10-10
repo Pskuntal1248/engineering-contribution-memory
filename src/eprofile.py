@@ -1,6 +1,7 @@
 """Build and update the engineering profile from items. Deterministic core + optional model passes."""
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any
 
 import analysis
@@ -47,6 +48,8 @@ def expand(row: dict[str, Any]) -> Item:
     if row["t"] == "pr" and "docs_only" not in m:
         import normalize
         m["docs_only"] = normalize.docs_only_pr(None, row.get("title", ""))
+    if row.get("p"):
+        m["saved_project"] = row["p"]  # the project this item belonged to at the last backfill (the stored text is cut short, so re-linking alone can lose it)
     return Item(id=row["id"], source=row["s"], type=row["t"], date=row["date"], title=row["title"], url=row["url"], text=row["text"],
                 author=row.get("author", ""), co_authors=row.get("co", []), keys=row.get("keys", []), meta=m)
 
@@ -62,10 +65,29 @@ async def build(items: list[Item], *, username: str, names: set[str], llm, budge
         dense, enotes = await embedder.embed(items)
     clusters = linking.link(items, repo_aliases or {}, dense=dense or None)
     links = {i: r for c in clusters.values() for i, r in c["links"].items()}
+    if reuse_names:  # a saved item that re-linking now drops (its stored text is shorter) goes back to the project it was in
+        home: dict[str, str] = {}
+        for pid, c in clusters.items():
+            votes = Counter(by_id[i].meta["saved_project"] for i in c["item_ids"] if by_id[i].meta.get("saved_project"))
+            if votes:
+                home.setdefault(votes.most_common(1)[0][0], pid)
+        placed = {iid for c in clusters.values() if len(c["item_ids"]) >= 2 for iid in c["item_ids"]}
+        for it in items:
+            sp = it.meta.get("saved_project")
+            if sp and it.id not in placed and sp in home:
+                for c in clusters.values():  # leave the one-item group it formed alone
+                    if it.id in c["item_ids"]:
+                        c["item_ids"] = [x for x in c["item_ids"] if x != it.id]
+                clusters[home[sp]]["item_ids"].append(it.id)
     project_of = {iid: pid for pid, c in clusters.items() for iid in c["item_ids"]}
     notes: list[str] = list(enotes)
     if embedder is not None and dense:
-        notes.append(f"topic grouping used embeddings ({embedder.calls} calls to the Gravity endpoint) plus keywords")
+        notes.append(f"topic grouping used embeddings ({embedder.calls} call{'' if embedder.calls == 1 else 's'} to the Gravity endpoint) plus keywords")
+        for _ in range(embedder.calls):  # an embeddings call is a model call: it counts against the limit and shows in model_calls
+            try:
+                budget.spend()
+            except Exception:  # noqa: BLE001 - already made; only the count matters
+                break
     prior_ver = (prior or {}).get("verdicts", {})
 
     # invisible work / thread verdicts (model only for threads we have no verdict for)
@@ -76,7 +98,10 @@ async def build(items: list[Item], *, username: str, names: set[str], llm, budge
     allv.update(verdicts)
     invisible = analysis.find_invisible(items, links, names, allv)
     dcands = [i for i in items if analysis.is_decision_candidate(i)]
-    dverd, n0 = await analysis.classify_decisions_with_model(llm, budget, dcands)
+    prior_dv = (prior or {}).get("dverdicts", {})  # saved decision wording: the same sentence in every mode, and no repeat model call
+    dverd = {k: analysis.DecisionVerdict(**v) for k, v in prior_dv.items() if k in {c.id for c in dcands}}
+    new_dv, n0 = await analysis.classify_decisions_with_model(llm, budget, [c for c in dcands if c.id not in dverd])
+    dverd.update(new_dv)
     notes += n0
     decisions = analysis.find_decisions(items, names, username, dverd)
 
@@ -88,19 +113,33 @@ async def build(items: list[Item], *, username: str, names: set[str], llm, budge
         return len(c["item_ids"]) >= MIN_PROJECT_ITEMS and bool(real)
 
     base = [analysis.baseline_project_card(pid, c["item_ids"], by_id, username) for pid, c in sorted(clusters.items()) if is_project(c)]
-    cards, n2 = await analysis.project_cards_with_model(llm, budget, base, by_id, username)
+    # One name, goal and outcome per project in every mode: the backfill saves them with the project's item keys; a later run gives each
+    # project the saved card it shares the most items with (one saved card per project, any shared item counts), and only projects with
+    # no saved card go to the model.
+    saved = list((prior or {}).get("cards", [])) if reuse_names else []
+    pairs = sorted(((len({id_key(e) for e in b["evidence"]} & set(s_.get("ev", []))), bi, si) for bi, b in enumerate(base) for si, s_ in enumerate(saved)), reverse=True)
+    match: dict[int, dict] = {}
+    used: set[int] = set()
+    for n_, bi, si in pairs:
+        if n_ >= 1 and bi not in match and si not in used:
+            match[bi] = saved[si]
+            used.add(si)
+    unchanged = {bi for bi, sv in match.items() if {id_key(e) for e in base[bi]["evidence"]} <= set(sv.get("ev", []))}  # nothing new in this project since it was saved
+    todo = [b for bi, b in enumerate(base) if bi not in unchanged]  # a project with new items gets a fresh outcome, but keeps its saved name and goal
+    cards_new, n2 = await analysis.project_cards_with_model(llm, budget, todo, by_id, username) if todo else ([], [])
     notes += n2
-    # One name per project in every mode: a backfill saves each project's name and goal with a few of its item keys; later runs
-    # give a project the saved name and goal of the saved project it overlaps most, instead of a new model wording.
-    saved = (prior or {}).get("cards", []) if reuse_names else []
-    for card in cards:
-        mine_k = {id_key(e) for e in card["evidence"]}
-        best = max(saved, key=lambda s_: len(mine_k & set(s_.get("ev", []))), default=None)
-        if best and len(mine_k & set(best.get("ev", []))) >= max(1, min(len(mine_k), len(best.get("ev", []))) // 2):
-            card["name"] = best["name"]
-            if best.get("goal"):
-                card["goal"] = best["goal"]
-    card_store = [{"ev": sorted({id_key(e) for e in c["evidence"]})[:14], "name": c["name"], "goal": c.get("goal", "")[:200]} for c in cards]
+    by_pid = {c["project_id"]: c for c in cards_new}
+    cards = []
+    for bi, b in enumerate(base):
+        card = dict(by_pid.get(b["project_id"], b))
+        if bi in match:
+            sv = match[bi]
+            card["name"] = sv["name"]
+            for fld in ("goal", "outcome") if bi in unchanged else ("goal",):
+                if sv.get(fld):
+                    card[fld] = sv[fld]
+        cards.append(card)
+    card_store = [{"ev": sorted({id_key(e) for e in c["evidence"]})[:60], "name": c["name"], "goal": c.get("goal", "")[:200], "outcome": c.get("outcome", "")[:240]} for c in cards]
     for card in cards:
         prs = [by_id[e] for e in card["evidence"] if by_id[e].type == "pr"]
         card["co_contributors"] = [n for n in {p for e in card["evidence"] for p in ([by_id[e].author] + by_id[e].co_authors)} if n and n.lower() != username.lower() and n not in names and not outputs_id(n)][:6]
@@ -133,7 +172,7 @@ async def build(items: list[Item], *, username: str, names: set[str], llm, budge
     return {
         "projects": projects_clean, "invisible": invisible, "decisions": decisions, "skills": skills, "improvements": improv,
         "gaps": gaps, "stats": stats, "notes": notes, "project_of": {i: p for i, p in project_of.items() if p in {c["project_id"] for c in projects_clean}},
-        "verdicts": {k: v.model_dump() for k, v in allv.items()}, "card_store": card_store,
+        "verdicts": {k: v.model_dump() for k, v in allv.items()}, "card_store": card_store, "dverdicts": {k: v.model_dump() for k, v in dverd.items()},
         "confidential": sorted(confidential_ids(items)),
         "top": [{"id": i.id, "title": i.title, "lines": metrics.contribution_size(i)} for i in metrics.top_contributions(items, 8)],
     }
