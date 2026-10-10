@@ -84,7 +84,7 @@ def make_graph(deps: Deps):
             store = PlatformStore(ps, mem) if ps is not None else NativeMemoryStore(mem, 256)
         prior = await store.aload() if hasattr(store, "aload") else store.load()
         req = str(inp.get("request") or "auto")
-        said, d1, d2 = parse_request(str(inp.get("ask") or ""), deps.now().date())
+        said, d1, d2 = parse_request(str(inp.get("ask") or inp.get("message") or ""), deps.now().date())  # "message" is how a follow-up request typed under a finished run arrives
         if said and req == "auto":
             req = said  # the typed request wins over the dropdown's default
         if d1 or d2:
