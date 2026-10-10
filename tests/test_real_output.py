@@ -127,7 +127,7 @@ def test_notion_profile_and_untitled_pages_are_not_counted_as_docs():
     import normalize as N
     assert isinstance(N.normalize_doc({"id": "1", "title": "Parth Singh", "body": ""}, "notion", ["Parth Singh"]), N.Skipped)
     assert isinstance(N.normalize_doc({"id": "2", "title": "", "body": "x"}, "notion", []), N.Skipped)
-    assert isinstance(N.normalize_doc({"id": "3", "title": "Design: ranking", "body": "text", "modified": "2026-09-01"}, "notion", ["Parth Singh"]), Item)
+    assert isinstance(N.normalize_doc({"id": "3", "title": "Design: ranking", "body": "We chose a two stage ranking approach", "modified": "2026-09-01"}, "notion", ["Parth Singh"]), Item)
 
 
 def test_error_text_is_clean_and_pr_and_ticket_share_one_evidence_line():
