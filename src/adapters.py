@@ -89,6 +89,8 @@ def explain(source: str, err: str) -> str:
     name = source.split(":")[-1].capitalize()
     if any(k in e for k in ("not enabled", "not installed", "no confluence", "not licensed", "unavailable", "no such app", "not available")):
         return f"{name} is not enabled on this site or workspace (tool said: {tm}). Remove it from docs_source or enable it."
+    if "scope" in e and any(k in e for k in ("401", "403", "unauthor", "forbidden")):
+        return f"{name} is connected but its permission scope does not match; reconnect with: gravity connect {source.split(':')[-1].lower()}"
     if any(k in e for k in ("needs_reconnect", "reconnect", "unauthor", "401", "403", "forbidden", "not connected", "no connection", "no account")):
         return f"{name} is not connected, or the connection needs renewing: run gravity connect for it (tool said: {tm})"
     if "404" in e or "not found" in e:
@@ -201,16 +203,80 @@ async def fetch_jira(call: Call, projects: list[str], since: str, log: ToolLog, 
 
 
 # ------------------------------------------------------------ Confluence
+def _scope_problem(err: str) -> bool:
+    e = (err or "").lower()
+    return "scope" in e or "401" in e or "403" in e or "unauthor" in e or "forbidden" in e
+
+
+async def fetch_confluence_v2(call: Call, since: str, log: ToolLog, out: dict, first_error: str) -> None:
+    """Fallback when the CQL search (Confluence REST v1) is refused for scope: list recent pages through the v2 pages tool and keep
+    the ones the connected user wrote or last edited. If that is refused too, say so plainly; the user needs to reconnect."""
+    try:
+        log.add("confluence.get_current_user")
+        me = await call("confluence.get_current_user", {})
+        acct = find_key(me, "account_id", "accountId")
+        mine_ids = {str(acct)} if acct else set()
+        my_name = str(find_key(me, "display_name", "displayName", "public_name", "publicName") or "")
+    except Exception as e:  # noqa: BLE001
+        out["failed"].append({"source": "docs:confluence", "error": explain("docs:confluence", first_error)})
+        return
+    if not mine_ids:
+        out["failed"].append({"source": "docs:confluence", "error": "Confluence is connected but did not say who you are, so your pages cannot be picked out. Reconnect with gravity connect confluence."})
+        return
+    try:
+        log.add("confluence.get_pages")
+        data = await call("confluence.get_pages", {"sort": "-modified-date", "limit": 100, "status": "current", "body_format": "storage"})
+    except Exception as e:  # noqa: BLE001
+        out["failed"].append({"source": "docs:confluence", "error": explain("docs:confluence", str(e))})
+        return
+    bad = failed_payload(data)
+    if bad:
+        out["failed"].append({"source": "docs:confluence", "error": explain("docs:confluence", bad)})
+        return
+    sem = asyncio.Semaphore(PARALLEL)
+
+    async def labels_of(pid: str) -> list[str]:
+        try:
+            log.add("confluence.get_labels_for_page", id=pid)
+            got = await _gather(sem, call, "confluence.get_labels_for_page", {"id": pid, "limit": 50})
+            return [str(x.get("name", "")) for x in rows(got, "results")]
+        except Exception:  # noqa: BLE001
+            return []
+    for h in rows(data, "results")[:MAX_DOCS_PER_SOURCE]:
+        ver = h.get("version") or {}
+        modified = str(ver.get("createdAt") or h.get("createdAt") or "")
+        if modified[:10] and modified[:10] < since[:10]:
+            continue
+        author_id, editor_id = str(h.get("authorId") or ""), str(ver.get("authorId") or "")
+        if author_id not in mine_ids and editor_id not in mine_ids:
+            continue
+        links = h.get("_links") or {}
+        base = str((find_key(data, "base") or "")).rstrip("/")
+        web = str(links.get("webui") or "")
+        out["docs"].append({
+            "_source": "confluence", "id": str(h.get("id", "")), "title": h.get("title") or "", "body": text_of((h.get("body") or {}).get("storage") or {}),
+            "labels": await labels_of(str(h.get("id", ""))), "author": my_name if author_id in mine_ids else "", "editors": [my_name] if editor_id in mine_ids else [],
+            "created": str(h.get("createdAt") or ""), "modified": modified, "url": (base + web) if web.startswith("/") and base else web,
+            "_mine": True, "kind": "confluence page"})
+    out.setdefault("capped", []).append("confluence: read through the pages list (the CQL search was refused); only the 100 most recently edited pages were checked")
+
+
 async def fetch_confluence(call: Call, since: str, log: ToolLog, out: dict) -> None:
     cql = f'type = page AND (creator = currentUser() OR contributor = currentUser()) AND lastModified >= "{since[:10]}" ORDER BY lastModified DESC'
     try:
         log.add("confluence.cql_search")
         data = await call("confluence.cql_search", {"cql": cql, "limit": 50, "expand": "content.version,content.history,content.metadata.labels"})
     except Exception as e:  # noqa: BLE001
+        if _scope_problem(str(e)):
+            await fetch_confluence_v2(call, since, log, out, str(e))
+            return
         out["failed"].append({"source": "docs:confluence", "error": explain("docs:confluence", str(e))})
         return
     bad = failed_payload(data)
     if bad:
+        if _scope_problem(bad):
+            await fetch_confluence_v2(call, since, log, out, bad)
+            return
         out["failed"].append({"source": "docs:confluence", "error": explain("docs:confluence", bad)})
         return
     hits = rows(data, "results")[:MAX_DOCS_PER_SOURCE]
