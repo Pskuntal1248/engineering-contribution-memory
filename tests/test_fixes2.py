@@ -271,3 +271,31 @@ def test_technical_design_skill_cites_the_design_doc_before_the_adr_pr():
     doc = Item(id="d", source="doc", type="doc", date="2026-09-02", title="Design: Search ranking approach", text="design doc for ranking decision", meta={"mine": True})
     sk = {k["skill"]: k for k in map_skills([adr, doc])}
     assert sk["technical design"]["evidence"][0] == "d"
+
+
+def test_notion_retries_once_and_never_runs_more_than_two_page_reads_at_once():
+    import asyncio, adapters
+    from adapters import fetch_notion
+    from guards import ToolLog
+    adapters.BACKOFF = 0.01
+    live = {"n": 0, "max": 0}
+    seen = {}
+
+    async def call(name, args):
+        if name == "notion.list_users":
+            return {"results": [{"id": "u1", "name": "Parth Singh", "type": "person", "object": "user"}]}
+        if name == "notion.search_notion_page":
+            return {"results": [{"id": f"p{i}", "url": f"https://n/p{i}", "last_edited_time": "2026-10-01T10:00:00Z", "created_time": "2026-10-01T10:00:00Z",
+                                 "created_by": {"id": "u1"}, "last_edited_by": {"id": "u1"}, "properties": {"Name": {"type": "title", "title": [{"plain_text": f"Design: Thing {i}"}]}}} for i in range(6)]}
+        live["n"] += 1; live["max"] = max(live["max"], live["n"])
+        await asyncio.sleep(0.02)
+        live["n"] -= 1
+        pid = args["page_id"]
+        seen[pid] = seen.get(pid, 0) + 1
+        if pid == "p0" and seen[pid] == 1:
+            raise ExceptionGroup("unhandled errors in a TaskGroup", [RuntimeError("429 rate limit")])
+        return "# Design\nA long enough body describing the decision we took and why we took it."
+    out = {"docs": [], "failed": [], "capped": []}
+    asyncio.run(fetch_notion(call, "2026-01-01T00:00:00Z", ToolLog(), out, ["Parth Singh"]))
+    assert len(out["docs"]) == 6 and live["max"] <= 2 and seen["p0"] == 2
+    assert not out["failed"] and not any(d.get("body_failed") for d in out["docs"])
