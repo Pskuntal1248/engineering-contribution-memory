@@ -8,7 +8,7 @@ import io
 from models import Item
 from metrics import shipped
 
-COLUMNS = ["source", "date", "project", "type", "item_id", "title", "url", "counted"]
+COLUMNS = ["source", "date", "project", "type", "title", "url", "counted"]
 
 
 def counted_label(it: Item) -> str:
@@ -32,7 +32,7 @@ def rows(items: list[Item], project_of: dict[str, str], cap: int | None = None) 
     truncated = cap is not None and len(ordered) > cap
     if truncated:
         ordered = ordered[-cap:]  # keep the newest
-    return [[i.source, i.date[:10], project_of.get(i.id, "(unlinked)"), i.type, i.id, i.title[:140], i.url, counted_label(i)] for i in ordered], truncated
+    return [[i.source, i.date[:10], project_of.get(i.id, "(unlinked)"), i.type, i.title[:90], i.url, counted_label(i)] for i in ordered], truncated
 
 
 def to_csv(table_rows: list[list[str]]) -> str:
