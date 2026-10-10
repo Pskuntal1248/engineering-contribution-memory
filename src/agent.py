@@ -174,7 +174,10 @@ def make_graph(deps: Deps):
         result["new_items"] = len(ctx["new_ids"])
         wanted_docs = _docs_sources(str(inp.get("docs_source", "")))
         result["docs_sources_asked"] = wanted_docs
-        result["docs_items_by_source"] = {s: sum(1 for i in items if i.type == "doc" and (str(i.meta.get("doc_source", "")).lower() in s or s in str(i.meta.get("doc_source", "")).lower())) for s in wanted_docs}
+        def _doc_src(i: Any) -> str:
+            parts = i.id.split(":")
+            return {"drive": "google drive"}.get(parts[1].lower(), parts[1].lower()) if len(parts) >= 3 else ""
+        result["docs_items_by_source"] = {s_: sum(1 for i in items if i.type == "doc" and _doc_src(i) == s_) for s_ in wanted_docs}
         result["dm_reads"] = len(ctx["log"].dm_reads())
         # The report itself is the corpus (the page Gravity shows in full) plus the ledger table (CSV download). The result box only
         # gets a short summary: the headline, the section list and the ledger size. No long text there, so nothing looks cut off.
