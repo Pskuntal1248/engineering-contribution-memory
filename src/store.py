@@ -106,10 +106,53 @@ class LocalFileStore:
 
 
 class PlatformStore:
-    """Reserved for langgraph get_store(). Raises until Gravity confirms it is available to our agents."""
+    """The full contribution history, in Gravity's get_store() (a LangGraph store, kept per user and agent).
+    state.memory keeps only a small marker: backfill_done, cursors, last run date, evidence-gap statuses and counts.
+    The store is written in `adump`, after the run's work succeeded; a re-run is safe because items are keyed by id."""
 
-    def load(self) -> dict[str, Any]:
-        raise NotImplementedError("platform store not confirmed by Gravity")
+    NS = ("uc10", "profile")
+    CHUNK = 150
 
-    def dump(self, profile: dict[str, Any]) -> dict[str, Any]:
-        raise NotImplementedError("platform store not confirmed by Gravity")
+    def __init__(self, store: Any, memory: dict[str, Any] | None):
+        self.store, self.memory = store, memory or {}
+
+    async def aload(self) -> dict[str, Any]:
+        marker = self.memory.get("marker") or {}
+        if not marker:
+            return {}
+        try:
+            found = await self.store.asearch(self.NS, limit=1000)
+        except Exception:  # noqa: BLE001
+            return {"_corrupt": True}
+        by_key = {it.key: it.value for it in found}
+        items: list[dict[str, Any]] = []
+        for k in sorted(k for k in by_key if k.startswith("items-")):
+            items += by_key[k].get("rows", [])
+        p: dict[str, Any] = {**marker, "items": items, "seen": by_key.get("seen", {}).get("ids", []), "verdicts": by_key.get("verdicts", {}).get("v", {})}
+        if marker.get("n_items", 0) and not items:  # marker says there was history, the store is empty: do not pretend
+            p.update(backfill_done=False, last_run="", items=[], _store_empty=True)
+        return p
+
+    async def adump(self, profile: dict[str, Any]) -> dict[str, Any]:
+        rows = profile.get("items", [])
+        chunks = [rows[i : i + self.CHUNK] for i in range(0, len(rows), self.CHUNK)]
+        for n, c in enumerate(chunks):
+            await self.store.aput(self.NS, f"items-{n:04d}", {"rows": c})
+        old = await self.store.asearch(self.NS, limit=1000)
+        for it in old:  # chunks left over from a longer earlier list
+            if it.key.startswith("items-") and int(it.key.split("-")[1]) >= len(chunks):
+                await self.store.adelete(self.NS, it.key)
+        await self.store.aput(self.NS, "seen", {"ids": profile.get("seen", [])})
+        await self.store.aput(self.NS, "verdicts", {"v": profile.get("verdicts", {})})
+        marker = {k: profile[k] for k in ("cursors", "last_run", "backfill_done", "gaps") if k in profile}
+        marker.update(schema=SCHEMA, n_items=len(rows))
+        return {"marker": marker}
+
+
+def platform_store() -> Any | None:
+    """The run's get_store(), or None when the platform gives none (then state.memory holds the profile)."""
+    try:
+        from langgraph.config import get_store
+        return get_store()
+    except Exception:  # noqa: BLE001
+        return None
