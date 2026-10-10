@@ -8,7 +8,7 @@ import asyncio
 import re
 from typing import Any, Awaitable, Callable
 
-from guards import ToolLog
+from guards import ToolLog, err_text
 
 Call = Callable[[str, dict], Awaitable[Any]]
 PARALLEL = 6
@@ -127,9 +127,18 @@ def text_of(data: Any, depth: int = 0) -> str:
     return ""
 
 
+_NO_RETRY = ("401", "403", "404", "scope", "unauthor", "forbidden", "not enabled", "not found", "not connected", "permission")
+
+
 async def _gather(sem: asyncio.Semaphore, call: Call, name: str, args: dict) -> Any:
     async with sem:
-        return await call(name, args)
+        try:
+            return await call(name, args)
+        except Exception as e:  # noqa: BLE001 - one retry for a transient gateway failure, never for a permission or missing-item error
+            if any(k in err_text(e).lower() for k in _NO_RETRY):
+                raise
+            await asyncio.sleep(1.0)
+            return await call(name, args)
 
 
 # ------------------------------------------------------------------ Jira
@@ -153,7 +162,7 @@ async def fetch_jira(call: Call, projects: list[str], since: str, log: ToolLog, 
             if not token or len(found) >= MAX_TICKETS or find_key(data, "isLast") is True:
                 break
     except Exception as e:  # noqa: BLE001
-        out["failed"].append({"source": "jira", "error": str(e)[:200]})
+        out["failed"].append({"source": "jira", "error": err_text(e, 200)})
         if not found:
             return
     if len(found) >= MAX_TICKETS:
@@ -179,7 +188,7 @@ async def fetch_jira(call: Call, projects: list[str], since: str, log: ToolLog, 
                         t["key"] = full["key"]
                         t.setdefault("_aliases", []).append(key)
         except Exception as e:  # noqa: BLE001 - the ticket is still listed, without history
-            out["failed"].append({"source": f"jira-history:{key}", "error": str(e)[:120]})
+            out["failed"].append({"source": f"jira-history:{key}", "error": err_text(e, 120)})
             return
         c = (t.get("fields") or {}).get("comment") or {}
         have = c.get("comments") or []
@@ -247,7 +256,7 @@ async def fetch_confluence_v2(call: Call, since: str, log: ToolLog, out: dict, f
         except Exception:  # noqa: BLE001 - a plain list call, in case an option was refused
             data = await call("confluence.get_pages", {"limit": 100})
     except Exception as e:  # noqa: BLE001
-        out["failed"].append({"source": "docs:confluence", "error": explain("docs:confluence", str(e)).rstrip(". ") + ". " + await probe_confluence(call, log)})
+        out["failed"].append({"source": "docs:confluence", "error": explain("docs:confluence", err_text(e, 400)).rstrip(". ") + ". " + await probe_confluence(call, log)})
         return
     bad = failed_payload(data)
     if bad:
@@ -300,7 +309,7 @@ async def fetch_confluence(call: Call, since: str, log: ToolLog, out: dict) -> N
         if _scope_problem(str(e)):
             await fetch_confluence_v2(call, since, log, out, str(e))
             return
-        out["failed"].append({"source": "docs:confluence", "error": explain("docs:confluence", str(e))})
+        out["failed"].append({"source": "docs:confluence", "error": explain("docs:confluence", err_text(e, 400))})
         return
     bad = failed_payload(data)
     if bad:
@@ -326,7 +335,7 @@ async def fetch_confluence(call: Call, since: str, log: ToolLog, out: dict) -> N
             page = await _gather(sem, call, "confluence.get_page_by_id", {"id": pid})
             body = text_of((page or {}).get("body") if isinstance(page, dict) and "body" in page else page)
         except Exception as e:  # noqa: BLE001
-            out["failed"].append({"source": f"docs:confluence:{pid}", "error": str(e)[:120]})
+            out["failed"].append({"source": f"docs:confluence:{pid}", "error": err_text(e, 120)})
         links = c.get("_links") or h.get("_links") or {}
         out["docs"].append({
             "_source": "confluence", "id": pid, "title": c.get("title") or h.get("title") or "", "body": body, "labels": labels,
@@ -347,7 +356,7 @@ async def notion_user_id(call: Call, names: list[str], log: ToolLog, out: dict) 
         log.add("notion.list_users")
         users = rows(await call("notion.list_users", {"page_size": 100}), "results", "users")
     except Exception as e:  # noqa: BLE001
-        out["failed"].append({"source": "docs:notion", "error": f"could not list Notion users to find yours: {str(e)[:120]}"})
+        out["failed"].append({"source": "docs:notion", "error": f"could not list Notion users to find yours: {err_text(e, 120)}"})
         return "", False
     people = [u for u in users if str(u.get("type", "person")) == "person" and str(u.get("object", "user")) == "user"]
     want = [n.lower() for n in names if n]
@@ -382,7 +391,7 @@ async def fetch_notion(call: Call, since: str, log: ToolLog, out: dict, names: l
             if not cursor or not batch or str(batch[-1].get("last_edited_time", "9999")) < since:
                 break
     except Exception as e:  # noqa: BLE001
-        out["failed"].append({"source": "docs:notion", "error": str(e)[:200]})
+        out["failed"].append({"source": "docs:notion", "error": err_text(e, 200)})
         return
 
     def uid(x: Any) -> str:
@@ -398,16 +407,17 @@ async def fetch_notion(call: Call, since: str, log: ToolLog, out: dict, names: l
         return str(p.get("title") or "")
 
     async def one(p: dict) -> None:
-        body = ""
+        body, body_failed = "", False
         try:
             log.add("notion.get_page_markdown", id=p.get("id"))
             body = text_of(await _gather(sem, call, "notion.get_page_markdown", {"page_id": p.get("id")}))
-        except Exception as e:  # noqa: BLE001
-            out["failed"].append({"source": f"docs:notion:{p.get('id')}", "error": str(e)[:120]})
+        except Exception as e:  # noqa: BLE001 - the page is still listed from its title; only the preview is missing
+            body_failed = True
+            out["failed"].append({"source": f"docs:notion:{title(p) or p.get('id')}", "error": "page text could not be read, so it is listed by title only (" + err_text(e) + ")"})
         out["docs"].append({"_source": "notion", "id": p.get("id"), "title": title(p), "body": body, "labels": [],
                             "author": (names or ["me"])[0] if (solo or uid(p.get("created_by")) == me) else "", "editors": [(names or ["me"])[0]] if (solo or uid(p.get("last_edited_by")) == me) else [],
                             "created": p.get("created_time", ""), "modified": p.get("last_edited_time", ""), "url": p.get("url", ""),
-                            "_mine": True, "kind": "notion page"})
+                            "_mine": True, "kind": "notion page", "body_failed": body_failed})
 
     await asyncio.gather(*(one(p) for p in mine))
 
@@ -421,22 +431,23 @@ async def fetch_drive(call: Call, since: str, log: ToolLog, out: dict) -> None:
         data = await call("drive.find_file", {"q": q, "pageSize": 100, "orderBy": "modifiedTime desc",
                                               "fields": "files(id,name,mimeType,createdTime,modifiedTime,webViewLink,description,owners(displayName,emailAddress),lastModifyingUser(displayName,emailAddress))"})
     except Exception as e:  # noqa: BLE001
-        out["failed"].append({"source": "docs:drive", "error": str(e)[:200]})
+        out["failed"].append({"source": "docs:drive", "error": err_text(e, 200)})
         return
     files = rows(data, "files")[:MAX_DOCS_PER_SOURCE]
     sem = asyncio.Semaphore(PARALLEL)
 
     async def one(f: dict) -> None:
-        body = ""
+        body, body_failed = "", False
         try:
             log.add("drive.export_google_workspace_file", id=f.get("id"))
             body = text_of(await _gather(sem, call, "drive.export_google_workspace_file", {"fileId": f.get("id"), "mimeType": "text/plain"}))
         except Exception as e:  # noqa: BLE001
-            out["failed"].append({"source": f"docs:drive:{f.get('id')}", "error": str(e)[:120]})
+            body_failed = True
+            out["failed"].append({"source": f"docs:drive:{f.get('name') or f.get('id')}", "error": "doc text could not be read, so it is listed by title only (" + err_text(e) + ")"})
         owner = (f.get("owners") or [{}])[0]
         out["docs"].append({"_source": "drive", "id": f.get("id"), "title": f.get("name", ""), "body": (body + " " + (f.get("description") or "")).strip(), "labels": [],
                             "author": owner.get("displayName") or owner.get("emailAddress") or "", "editors": [(f.get("lastModifyingUser") or {}).get("displayName") or ""],
-                            "created": f.get("createdTime", ""), "modified": f.get("modifiedTime", ""), "url": f.get("webViewLink", ""), "_mine": True, "kind": "google doc"})
+                            "created": f.get("createdTime", ""), "modified": f.get("modifiedTime", ""), "url": f.get("webViewLink", ""), "_mine": True, "kind": "google doc", "body_failed": body_failed})
 
     await asyncio.gather(*(one(f) for f in files))
 
@@ -464,7 +475,7 @@ async def fetch_slack_search(call: Call, picked: list[dict], since_ts: str, log:
             log.add("slack.search_messages", channel=ch["id"], is_dm=False)
             data = await call("slack.search_messages", {"query": f"in:#{name} from:me after:{after}", "count": 100, "auto_paginate": True, "sort": "timestamp", "sort_dir": "asc"})
         except Exception as e:  # noqa: BLE001
-            out["failed"].append({"source": f"slack-search:#{name}", "error": str(e)[:200]})
+            out["failed"].append({"source": f"slack-search:#{name}", "error": err_text(e, 200)})
             continue
         hits = _matches(data)[:MAX_SLACK_HITS]
         if len(hits) >= MAX_SLACK_HITS:
@@ -497,7 +508,7 @@ async def fetch_slack_search(call: Call, picked: list[dict], since_ts: str, log:
             data = await _gather(sem, call, "slack.fetch_message_thread_from_a_conversation", {"channel": cid, "ts": ts, "limit": 200})
             msgs = rows(data, "messages")
         except Exception as e:  # noqa: BLE001
-            out["failed"].append({"source": f"slack-thread:{cid}:{ts}", "error": str(e)[:120]})
+            out["failed"].append({"source": f"slack-thread:{cid}:{ts}", "error": err_text(e, 120)})
             return
         if msgs:
             out["slack"]["threads"].append({"channel": by_id[cid].get("name", ""), "channel_id": cid, "messages": msgs})
