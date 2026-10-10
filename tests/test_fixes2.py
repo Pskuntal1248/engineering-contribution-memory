@@ -180,3 +180,23 @@ def test_decision_wording_survives_the_short_stored_text():
     assert find_decisions([d], {"Parth Singh"}, "p") == [] or True
     row = eprofile.compact(Item(id=d.id, source="doc", type="doc", date=d.date, title="Design: ranking choice", text=d.text, author="Parth Singh", meta={"mine": True}), "")
     assert row["m"].get("decision_text") is True
+
+
+def test_one_on_one_decisions_open_only_when_source_says_so_wins_all_with_what_it_did():
+    mk = lambda i, t, ttl, txt, **m: Item(id=i, source="x", type=t, date=f"2026-09-0{i[-1]}", title=ttl, text=txt, url=f"u{i}", keys=m.pop("keys", []), meta={"mine": True, **m})
+    prs = [mk(f"p{n}", "pr", f"PAY-{n} Thing {n}", "Adds a nightly job that reconciles settlements.", merged_flag=True, number=n, keys=[f"PAY-{n}"]) for n in range(1, 7)]
+    adr = mk("p9", "pr", "docs: ADR-001 move webhooks", "Proposes ADR-001: move outbound webhooks. Needs a decision this quarter.", needs_decision=True)
+    doc = mk("d1", "doc", "Design: Payout reconciliation job", "The job will run nightly as a queue-backed job.")
+    prof = {"gaps": [], "projects": [], "invisible": [], "improvements": [],
+            "decisions": [{"doc": "p9", "title": adr.title, "role": "led", "evidence": ["p9"], "summary": "Proposes moving outbound webhooks."},
+                          {"doc": "d1", "title": doc.title, "role": "led", "evidence": ["d1"], "summary": "The job will run nightly as a queue-backed job."}]}
+    out = O.one_on_one(prof, {i.id: i for i in prs + [adr, doc]}, [])
+    md = {s["heading"]: s["body"] for s in out}
+    assert md["Wins"].count("I shipped this on") == 6 and "What it did: Adds a nightly job" in md["Wins"]
+    assert "queue-backed job" in md["Decisions made"] and "would like a call" not in md["Decisions made"]
+    assert "still needs a decision" in md["Decision needing input"] and "webhooks" in md["Decision needing input"] and "queue-backed" not in md["Decision needing input"]
+
+
+def test_docs_by_source_uses_the_id_not_an_empty_meta():
+    import agent
+    assert agent._docs_sources("Confluence + Notion") == ["confluence", "notion"]
