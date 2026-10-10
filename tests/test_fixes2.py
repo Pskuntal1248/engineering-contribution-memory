@@ -127,3 +127,16 @@ def test_commits_covered_by_a_pr_are_hidden_from_evidence():
     c2 = Item(id="c2", source="github", type="commit", date="2026-09-02", title="tidy docs", keys=[], meta={})
     by = {i.id: i for i in (pr, c1, c2)}
     assert O._drop_covered_commits(["p", "c1", "c2"], by) == ["p", "c2"]
+
+
+def test_space_home_by_url_is_skipped_even_with_real_looking_body():
+    r = N.normalize_doc({"id": "9", "title": "Software Development", "url": "https://x.atlassian.net/wiki/spaces/SD/overview",
+                         "body": "Our team builds payment services and ships weekly with a long description of the work here.", "_mine": True, "modified": "2026-09-20T10:00:00Z"}, "confluence", [])
+    assert isinstance(r, N.Skipped) and "space home" in r.reason
+
+
+def test_docs_only_cluster_is_not_a_project():
+    import asyncio
+    from test_real_output import profile, ME
+    docs = [Item(id=f"doc:confluence:{i}", source="doc", type="doc", date="2026-09-0%d" % i, title=f"Design note {i} payouts", text="payout design details here", url=f"https://x/{i}", keys=["PAY-9"], meta={"mine": True}) for i in (1, 2)]
+    assert profile(docs)["projects"] == []
