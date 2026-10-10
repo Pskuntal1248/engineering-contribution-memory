@@ -249,8 +249,10 @@ def clip(text: str, n: int = 220) -> str:
     k = max(head.rfind(". "), head.rfind("! "), head.rfind("? "))
     if k >= n * 0.2:
         return head[: k + 1]
-    cut = head.rsplit(" ", 1)[0] if t[n] != " " else head
-    return cut.rstrip(" ,;:-(") + "..."
+    cut = (head.rsplit(" ", 1)[0] if t[n] != " " else head).rstrip(" ,;:-(")
+    while " " in cut and cut.rsplit(" ", 1)[1].lower() in {"a", "an", "the", "of", "to", "and", "or", "for", "with", "in", "on", "by", "at", "from", "how", "is", "are", "i", "we"}:
+        cut = cut.rsplit(" ", 1)[0].rstrip(" ,;:-(")
+    return cut + "..."
 
 
 _FP = [(r"\bthe user's\b", "my"), (r"\bthe user is\b", "I am"), (r"\bthe user has\b", "I have"), (r"\bthe user was\b", "I was"),
@@ -262,6 +264,8 @@ def first_person(text: str) -> str:
     out = text or ""
     for rx, rep in _FP:
         out = re.sub(rx, rep, out, flags=re.I if rx.startswith(r"\bthe") else 0)
+    out = re.sub(r"\bThe (?:text|doc|document|page|ADR|design)\s+(?:decides|decided)\s+(?:to|that)\s+", "We will ", out)
+    out = re.sub(r"\bThe (?:text|doc|document|page)\s+(?:states|says|records|proposes)\s+(?:that\s+)?", "", out)
     return re.sub(r"(^|[.!?] )i ", lambda m: m.group(1) + "I ", out)
 
 
