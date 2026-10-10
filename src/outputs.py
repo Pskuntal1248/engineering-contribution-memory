@@ -121,6 +121,35 @@ def block(title: str, sentence: str = "", facts: list[str] | None = None, items:
     return "\n\n".join(paras)
 
 
+def _project_facts(p: dict[str, Any]) -> list[str]:
+    facts = []
+    if p.get("goal") and not _PLACEHOLDER.search(p["goal"]):
+        facts.append(f"Goal: {p['goal']}")
+    facts.append(f"Role: {p['role']}" + (f", with {', '.join(p['co_contributors'][:3])}" if p.get("co_contributors") else ""))
+    if len(p.get("teams") or []) > 1:
+        facts.append("Teams: " + ", ".join(f"{t['team']}{' (from ' + t['since'] + ')' if t['since'] else ''}" for t in p["teams"]))
+    return facts
+
+
+_ACTION = {"led": "I led the work", "built": "I built it", "contributed": "I contributed to it", "reviewed": "I reviewed the work", "supported": "I supported it"}
+
+
+def _st_title(s: Statement, by_id: dict[str, Item]) -> str:
+    it = by_id.get(s.evidence[0]) if s.evidence else None
+    return short(it.title, 70) if it and it.type in {"thread", "doc", "pr", "ticket"} else short(s.text.split(":")[0], 70)
+
+
+def sar_block(p: dict[str, Any], by_id: dict[str, Item], conf: set[str]) -> str:
+    """Situation, action, result for one project. Only what the sources say; each line is dropped if the profile has nothing for it."""
+    situation = p["goal"] if p.get("goal") and not _PLACEHOLDER.search(p["goal"]) else f"Work on {p['name']}, {p['first']} to {p['last']}."
+    co = f", with {', '.join(p['co_contributors'][:3])}" if p.get("co_contributors") else ""
+    action = f"{_ACTION.get(p['role'], 'I contributed to it')}{co}."
+    result = p["outcome"] if p.get("outcome") and not _PLACEHOLDER.search(p["outcome"]) else ""
+    flag = (FLAG + " ") if any(e in conf for e in p["evidence"]) else ""
+    lines = [f"- Situation: {clip(situation, 200)}", f"- Action: {action}"] + ([f"- Result: {clip(result, 200)}"] if result else [])
+    return block(flag + p["name"], "", facts=None, items=None) + "\n\n" + "\n".join(lines) + "\n\nEvidence:\n" + "\n".join(f"- {x}" for x in _group_links(_ev(p["evidence"], by_id, 3)))
+
+
 def blocks_sec(heading: str, blocks: list[str], none: str) -> dict[str, Any]:
     return {"heading": heading, "body": "\n\n".join(blocks)} if blocks else {"heading": heading, "body": none}
 
@@ -135,7 +164,7 @@ def sources_for(items: list[Item]) -> list[dict[str, str]]:
 
 
 def build_statements(profile: dict[str, Any], by_id: dict[str, Item], kind: str, names: set[str], colleagues: list[str],
-                     date_from: str = "", date_to: str = "") -> list[Statement]:
+                     date_from: str = "", date_to: str = "", with_projects: bool = True) -> list[Statement]:
     """Deterministic statements from the profile, one per fact, each with evidence ids."""
     def within(ids: list[str]) -> bool:
         if not (date_from or date_to):
@@ -145,7 +174,7 @@ def build_statements(profile: dict[str, Any], by_id: dict[str, Item], kind: str,
 
     sts: list[Statement] = []
     if kind in {"weekly_summary", "one_on_one", "review_material", "interview_stories"}:
-        for p in profile["projects"]:
+        for p in (profile["projects"] if with_projects else []):
             if within(p["evidence"]):
                 co = f" with {', '.join(p['co_contributors'][:3])}" if p.get("co_contributors") else ""
                 tm = ""
@@ -155,7 +184,7 @@ def build_statements(profile: dict[str, Any], by_id: dict[str, Item], kind: str,
                 sts.append(Statement(f"{p['name']}{outcome}; my role: {p['role']}{co}.{tm}", p["evidence"][:6], p["role"]))
     for v in profile["invisible"]:
         if within(v["evidence"]):
-            sts.append(Statement(f"Not in any ticket ({v['label'].replace('_',' ')}): {v['summary']}", v["evidence"], "supported"))
+            sts.append(Statement(f"{_VERB.get(v['label'], 'I helped')} with no ticket raised: {v['summary']}", v["evidence"], "supported"))
     for d in profile["decisions"]:
         if within(d["evidence"]):
             sts.append(Statement(f"Decision ({d['role']}): {short(d['title'], 90)}." + ("" if _PLACEHOLDER.search(d["summary"]) else f" {d['summary']}"), d["evidence"], d["role"]))
@@ -300,7 +329,7 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
                        else block(it.title, f"{what} on {it.date[:10]}. Details are under Problems solved.", items=[it]))
         sections += [
             blocks_sec("Projects", [block(f"{p['name']} ({p['first']} to {p['last']})", p["outcome"] if not _PLACEHOLDER.search(p["outcome"]) else "",
-                                          facts=[f"Role: {p['role']}"], items=_ev(p["evidence"], by_id, 4)) for p in profile["projects"]],
+                                          facts=_project_facts(p), items=_ev(p["evidence"], by_id, 4)) for p in profile["projects"]],
                        "None found: no group of two or more linked PRs, tickets or docs yet."),
             blocks_sec("Problems solved", solved, "None found: no fix or debugging work with your part in it."),
             blocks_sec("Decisions", [block(d["title"], f"My role: {d['role']}." + ("" if _PLACEHOLDER.search(d["summary"]) else f" {d['summary']}"), items=_ev(d["evidence"], by_id, 1)) for d in profile["decisions"]],
@@ -318,10 +347,16 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
     if kind == "one_on_one":
         sections = one_on_one(profile, by_id, sts)
     if kind == "review_material":
-        sections.insert(0, {"heading": f"Impact statements {date_from or 'all'} to {date_to or 'now'}", "body": "\n\n".join(block(short(s_.text.split(":")[0], 70), s_.text, items=_ev(s_.evidence, by_id, 2)) for s_ in sts) or "None found in this period."})
+        conf_ = set(profile.get("confidential", []))
+        proj_ = [sar_block(p, by_id, conf_) for p in profile["projects"] if (not (date_from or date_to)) or any(
+            (not date_from or by_id[e].date[:10] >= date_from) and (not date_to or by_id[e].date[:10] <= date_to) for e in p["evidence"] if e in by_id)]
+        other = build_statements(profile, by_id, "review_material", names, colleagues, date_from, date_to, with_projects=False)
+        sections.insert(0, {"heading": f"Impact statements {date_from or 'all'} to {date_to or 'now'}",
+                            "body": "\n\n".join(proj_ + [block(_st_title(s_, by_id), s_.text, items=_ev(s_.evidence, by_id, 2)) for s_ in other]) or "None found in this period."})
     if kind == "interview_stories":
         st = stories(profile, by_id, terms, keep_internal)
-        sections.insert(0, {"heading": "Interview stories", "sections": [{"heading": x["title"], "body": x["story"], "bullets": [f"Answers: {x['question']}"] + [f"Evidence: {link_line(i)}" for i in _ev(x["evidence"], by_id, 2)]} for x in st]})
+        sections.insert(0, {"heading": "Interview stories", "sections": [{"heading": x["title"], "body": x["story"], "bullets": [f"Answers: {x['question']}"] + [f"Evidence: [{scrub(_lab(i), terms, keep_internal)}]({i.url})" if i.url else f"Evidence: {scrub(_lab(i), terms, keep_internal)}" for i in _ev(x["evidence"], by_id, 2)]} for x in st]})
+        sections.insert(1, {"heading": "Coverage", "body": f"{len(st)} stor{'y has' if len(st) == 1 else 'ies have'} evidence behind them. Stories for a disagreement are only included when a thread or PR discussion shows one; none is invented."})
     short_notes = [f"{f['source']}: {clip(f['error'], 260)}" for f in failed] + [clip(n, 260) for n in run_notes if not n.startswith(("topic grouping used", "capped: notion: single"))]
     if short_notes:
         sections.append({"heading": "What could not be done", "bullets": short_notes[:6]})
