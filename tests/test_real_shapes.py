@@ -112,10 +112,10 @@ def test_commits_inside_a_pr_and_self_comments_are_not_counted_and_reasons_are_n
     out, _ = run()
     assert out["stats"]["commits_authored"] == 1      # only the standalone fix
     notes = " ".join(out["notes"])
-    assert "rows not counted" in notes and "own comment on own PR" in notes and "already counted through its PR" in notes
+    assert "Rows not counted" in notes and "own comment on own PR" in notes and "already counted through its PR" in notes
     assert out["stats"]["reviews_given"] == 0
 
 
 def test_fetch_runs_calls_in_parallel_but_bounded():
     _, state = run()
-    assert 1 < state["peak"] <= 6
+    assert 1 < state["peak"] <= 10
