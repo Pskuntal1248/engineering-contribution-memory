@@ -183,18 +183,46 @@ def find_decisions(items: list[Item], display_names: set[str], username: str,
     return sorted(out, key=lambda d: d["doc"])
 
 
+_NAME_STOP = set("a an the and or to of in on for with from by at as is it this that add adds added fix fixes fixed update updates updated remove use make new into via initial commit pr merge revert docs doc design adr rfc wip chore feat feature bug task story epic ticket work follow followup".split())
+
+
+def project_name(ev: list[Item]) -> str:
+    """Readable name: the words that recur in the titles (full words, original spelling), plus the Jira project key.
+    Falls back to the earliest work title with its key and leading verb removed."""
+    work = [e for e in ev if e.type in {"ticket", "pr", "doc"} and not e.title.lower().startswith("revert")]
+    prefixes = Counter(k.split("-")[0] for e in ev if e.type not in {"thread", "doc"} for k in e.keys if "-" in k)
+    key = prefixes.most_common(1)[0][0] if prefixes else ""
+
+    def words(title: str) -> list[str]:
+        t = re.sub(r"\b[A-Z][A-Z0-9]+-\d+\b[:\s]*", "", title)
+        return [w for w in re.findall(r"[A-Za-z][A-Za-z0-9]{2,}", t) if w.lower() not in _NAME_STOP]
+    norm = lambda w: w.lower().rstrip("s")
+    count: Counter[str] = Counter()
+    first: dict[str, str] = {}
+    for e in sorted(work, key=lambda x: x.date):
+        for w in set(norm(w) for w in words(e.title)):
+            count[w] += 1
+        for w in words(e.title):
+            first.setdefault(norm(w), w.lower())
+    ranked = sorted(count.items(), key=lambda kv: (-kv[1], kv[0]))
+    src = sorted(work, key=lambda x: x.date)
+    if ranked and ranked[0][1] >= 2 and (len(ranked) == 1 or ranked[0][1] >= 2 * ranked[1][1]):
+        label = first[ranked[0][0]]  # one word clearly dominates the titles: "payouts"
+    else:  # otherwise the earliest work title, in its own word order, without the key and the leading verb
+        label = " ".join(words(src[0].title)[:4]).lower() if src else ""
+    label = label[:1].upper() + label[1:]
+    return f"{label} ({key})" if label and key else label or key
+
+
 def baseline_project_card(pid: str, ids: list[str], by_id: dict[str, Item], username: str) -> dict[str, Any]:
     ev = [by_id[i] for i in ids]
     tickets = [e for e in ev if e.type == "ticket"]
-    words: Counter[str] = Counter()
-    for e in ev:
-        words.update(tokens(e.title))
-    top = [w for w, _ in sorted(words.items(), key=lambda kv: (-kv[1], kv[0]))[:3]]
+    name = project_name(ev)
     prs = [e for e in ev if e.type == "pr" and e.meta.get("mine")]
     shipped_n = sum(1 for e in prs if shipped(e))
     role = cap_role("built" if prs else "contributed", ev, username)
     dates = sorted(e.date for e in ev)
-    return {"project_id": pid, "name": " ".join(top).title() or pid, "goal": "not stated in the sources (model summary needed)",
+    return {"project_id": pid, "name": name or pid, "goal": "not stated in the sources (model summary needed)",
             "outcome": f"{shipped_n} PRs shipped, {sum(1 for t in tickets if t.meta.get('status','').lower() in {'done','closed','resolved'})} tickets done",
             "role": role, "first": dates[0][:10], "last": dates[-1][:10], "evidence": sorted(ids, key=lambda i: (by_id[i].date, i))[:60]}
 
@@ -202,8 +230,8 @@ def baseline_project_card(pid: str, ids: list[str], by_id: dict[str, Item], user
 SKILL_LEXICON = {
     "payments & idempotency": r"idempot|payout|upi|ledger|settlement",
     "async messaging (queues)": r"queue|webhook|consumer|dead letter",
-    "frontend & accessibility": r"checkout|accessib|contrast|design system|component|storybook",
-    "debugging & incident response": r"incident|pager|root cause|traced|debug",
+    "frontend & accessibility": r"accessib|contrast|design system|storybook|checkout (page|flow|form)|a11y|css",
+    "debugging & incident response": r"incident|pager|root cause|traced|debugg|stack trace|postmortem",
     "code review": r"review",
     "mentoring": r"mentor|paired|new joiner|onboard",
     "technical design": r"adr|design doc|rfc|decision",
@@ -214,8 +242,16 @@ def map_skills(items: list[Item]) -> list[dict[str, Any]]:
     out = []
     for skill, pat in sorted(SKILL_LEXICON.items()):
         rx = re.compile(pat, re.I)
-        ids = [i.id for i in items if (i.meta.get("mine") or i.type == "review") and rx.search(i.title + " " + i.text[:600])]
-        if ids:
+        ids = []
+        for i in items:
+            if not (i.meta.get("mine") or i.type == "review"):
+                continue
+            hits = {m.group(0).lower() for m in rx.finditer(i.title + " " + i.text[:600])}
+            in_title = bool(rx.search(i.title))
+            # one passing mention in a long body is not evidence of a skill: need the title, or two different terms
+            if in_title or len(hits) >= 2 or (i.type == "thread" and hits):
+                ids.append(i.id)
+        if len(ids) >= 2 or (len(ids) == 1 and (re.search(pat, next(i.title for i in items if i.id == ids[0]), re.I) or next(i.type for i in items if i.id == ids[0]) == "thread")):
             out.append({"skill": skill, "count": len(ids), "evidence": sorted(ids)[:6]})
     return sorted(out, key=lambda d: (-d["count"], d["skill"]))
 
