@@ -198,15 +198,40 @@ class GatewaySource:
             out["capped"].append(f"commit sizes for {repo}: first {MAX_COMMIT_LOOKUPS} commits only")
         out["github"]["commits"].extend(picked)
 
+    async def _list_channels(self, log: ToolLog) -> list[dict]:
+        """All channels the connected account can see, page by page. slack.list_channels defaults to limit=1 and public channels only,
+        so ask for public and private (and DMs only when the user opted in)."""
+        import adapters
+        types = "public_channel,private_channel" + (",im,mpim" if self.include_dms else "")
+        chans: list[dict] = []
+        cursor = ""
+        for _ in range(30):
+            args: dict[str, Any] = {"types": types, "limit": 1000, "exclude_archived": True}
+            if cursor:
+                args["cursor"] = cursor
+            resp = await self.call("slack.list_channels", args)
+            chans += _rows(resp, "channels")
+            cursor = str(adapters.find_key(resp, "next_cursor") or "")
+            if not cursor:
+                break
+        return chans
+
     async def _slack(self, out: dict, since: str, log: ToolLog) -> None:
         try:
             log.add("slack.list_channels")
-            chans = _rows(await self.call("slack.list_channels", {}), "channels")
+            chans = await self._list_channels(log)
             out["slack"]["channels"] = chans
             from guards import channels_to_read, is_dm_channel
             picked, missing = channels_to_read(chans, self.slack_channels, self.include_dms, log)
             for m in missing:
-                out["failed"].append({"source": f"slack:#{m}", "error": "channel not found or not accessible"})
+                out["failed"].append({"source": f"slack:#{m}", "error": (
+                    f"#{m} is not in the channel list of the connected Slack account ({len(chans)} channels listed, public and private). "
+                    "Check: the name is spelled exactly; you are a member of it (a private channel is only listed for members); "
+                    "and `gravity connect slack` was done in the same workspace. If the connection is older than the private channel, "
+                    "reconnect it so private channels are readable.")})
+            for ch in picked:
+                if ch.get("is_member") is False:
+                    out["failed"].append({"source": f"slack:#{ch.get('name', '')}", "error": "connected Slack account is not a member of this channel; join it, then rerun"})
             if "slack.search_messages" in self.has and "slack.fetch_message_thread_from_a_conversation" in self.has:
                 import adapters
                 await adapters.fetch_slack_search(self.call, [c for c in picked if not is_dm_channel(c)], since, log, out)
