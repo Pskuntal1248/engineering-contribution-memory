@@ -299,3 +299,18 @@ def test_notion_retries_once_and_never_runs_more_than_two_page_reads_at_once():
     asyncio.run(fetch_notion(call, "2026-01-01T00:00:00Z", ToolLog(), out, ["Parth Singh"]))
     assert len(out["docs"]) == 6 and live["max"] <= 2 and seen["p0"] == 2
     assert not out["failed"] and not any(d.get("body_failed") for d in out["docs"])
+
+
+def test_run_all_checker_flags_a_taskgroup_and_passes_a_clean_weekly_output(tmp_path):
+    import importlib.util, pathlib
+    spec = importlib.util.spec_from_file_location("run_all", pathlib.Path(__file__).resolve().parent.parent / "run_all.py")
+    ra = importlib.util.module_from_spec(spec); spec.loader.exec_module(ra)
+    md = "## What changed this week\n\n1 item(s).\n\n## Shipped\n\n**A fix**\n\nI did it.\n\n[PR #1](https://x/pull/1)\n\n## In progress\n\nNothing in progress.\n\n## Decisions\n\nNone this week.\n\n## Problems solved\n\nNone this week.\n\n## Help given\n\nNone this week.\n\n## Appendix: item ledger\n\n1 items.\n"
+    ok, fails = ra.check_mode("weekly_summary", md, {"seconds": 5, "model_calls": 2}, 5, 0, "", 300, 25)
+    assert not fails
+    ok, fails = ra.check_mode("weekly_summary", md + "\n- docs:notion:x: unhandled errors in a TaskGroup", {"seconds": 5, "model_calls": 2}, 5, 0, "", 300, 25)
+    assert any("TaskGroup" in f for f in fails)
+    ok, fails = ra.check_mode("weekly_summary", md.replace("[PR #1](https://x/pull/1)", "[c](https://x/commit/abc)"), {"seconds": 5, "model_calls": 2}, 5, 0, "", 300, 25)
+    assert any("commit" in f for f in fails)
+    ok, fails = ra.check_mode("one_on_one", "## Wins\n\n**T**\n\nI did.\n\n## Appendix: item ledger\n\nx\n", {"seconds": 500, "model_calls": 30}, 500, 0, "", 120, 10)
+    assert any("link" in f for f in fails) and any("runtime" in f for f in fails) and any("model calls" in f for f in fails)
