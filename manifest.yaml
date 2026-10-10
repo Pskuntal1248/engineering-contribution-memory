@@ -50,8 +50,8 @@ inputs:
     required: false
   - name: docs_source
     type: static-dropdown
-    label: "Docs source (Confluence, Notion or Google Drive; read only when a tool for it exists)"
-    options: ["None", "Confluence", "Notion", "Google Drive"]
+    label: "Docs source (pick the ones you use; each must be connected)"
+    options: ["None", "Confluence", "Notion", "Google Drive", "Confluence + Notion", "Confluence + Google Drive", "Notion + Google Drive", "All three"]
     default: "None"
     required: false
   - name: backfill_months
@@ -106,6 +106,18 @@ permissions:
     - github.list_pr_reviews
     - github.list_commits
     - github.get_commit
+    - jira.search_issues
+    - jira.get_issue
+    - jira.list_issue_comments
+    - confluence.cql_search
+    - confluence.get_page_by_id
+    - notion.search_notion_page
+    - notion.get_page_markdown
+    - notion.get_about_user
+    - drive.find_file
+    - drive.export_google_workspace_file
+    - slack.search_messages
+    - slack.fetch_message_thread_from_a_conversation
     - slack.list_channels
     - slack.read_history
   models:
