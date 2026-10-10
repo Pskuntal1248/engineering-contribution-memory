@@ -18,6 +18,16 @@ from models import Item
 Label = Literal["problem_solved", "decision", "help_given", "mentoring", "none"]
 
 
+_CLAIMS = re.compile(r"\b(redone|redo|rework(?:ed)?|rewritten|rolled back|abandoned|cancell?ed|postponed|failed|delayed)\b", re.I)
+
+
+def _grounded(text: str, evidence_text: str) -> str:
+    """Drop a clause that claims redo/rollback/failure/delay when no source text uses that word."""
+    parts = re.split(r"(?<=[.;])\s+", text or "")
+    keep = [p for p in parts if not any(m.group(1).lower() not in evidence_text for m in _CLAIMS.finditer(p))]
+    return " ".join(keep).strip()
+
+
 class ThreadVerdict(BaseModel):
     thread_id: str = Field(description="the id given in the input, copied exactly")
     label: Label
@@ -321,5 +331,6 @@ async def project_cards_with_model(llm: LLM | None, budget: Budget, base: list[d
             if c.project_id not in out:
                 continue
             ev = [e for e in c.evidence if e in by_id] or out[c.project_id]["evidence"]
-            out[c.project_id].update(name=clip(c.name, 80), goal=first_person(clip(c.goal, 240)), outcome=first_person(clip(c.outcome, 240)), role=cap_role(c.role, [by_id[e] for e in ev], username))
+            src_text = " ".join(by_id[e].text + " " + by_id[e].title for e in ev).lower()
+            out[c.project_id].update(name=clip(c.name, 80), goal=_grounded(first_person(clip(c.goal, 240)), src_text), outcome=_grounded(first_person(clip(c.outcome, 240)), src_text), role=cap_role(c.role, [by_id[e] for e in ev], username))
     return list(out.values()), notes
