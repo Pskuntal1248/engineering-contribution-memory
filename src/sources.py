@@ -15,7 +15,7 @@ Call = Callable[[str, dict], Awaitable[Any]]  # call("github.list_pr_reviews", {
 MAX_PRS_PER_REPO = 600
 MAX_COMMITS_PER_REPO = 300
 MAX_COMMIT_LOOKUPS = 100
-PARALLEL = 6  # simultaneous gateway calls
+PARALLEL = 10  # simultaneous gateway calls
 MAX_PR_FILE_LOOKUPS = 400  # file lists are one call per PR; bounded and reported
 
 
@@ -76,24 +76,31 @@ class GatewaySource:
                  jira_projects: list[str], has: set[str], docs_sources: list[str] | None = None, names: list[str] | None = None):
         self.names = names or []
         self.docs_sources = [d.lower() for d in (docs_sources or [])]
-        self.call, self.username, self.repos = call, username, repos
+        gate = asyncio.Semaphore(PARALLEL)  # one limit for every source running side by side
+
+        async def limited(tool: str, args: dict) -> Any:
+            async with gate:
+                return await call(tool, args)
+        self.call, self.username, self.repos = limited, username, repos
         self.slack_channels, self.include_dms, self.jira_projects, self.has = slack_channels, include_dms, jira_projects, has
 
     async def fetch(self, since: str, until: str | None, log: ToolLog) -> dict[str, Any]:
         out: dict[str, Any] = {"github": {"prs": [], "reviews": {}, "commits": []}, "jira": [], "slack": {"channels": [], "threads": []}, "docs": [], "failed": [], "capped": []}
-        await self._github(out, since, log)
-        if self.slack_channels or self.include_dms:  # no Slack call at all unless the user named channels
-            await self._slack(out, since, log)
         import adapters
-        if "jira.search_issues" in self.has:
-            await adapters.fetch_jira(self.call, self.jira_projects, since, log, out)
-        else:
-            out["failed"].append({"source": "jira", "error": "jira.search_issues is not available in this run"})
-        wanted = {"confluence": ("confluence.cql_search", adapters.fetch_confluence), "notion": ("notion.search_notion_page", adapters.fetch_notion),
-                  "google drive": ("drive.find_file", adapters.fetch_drive)}
-        for src_name, (tool, fn) in wanted.items():
+
+        async def slack_part() -> None:
+            if self.slack_channels or self.include_dms:  # no Slack call at all unless the user named channels
+                await self._slack(out, since, log)
+
+        async def jira_part() -> None:
+            if "jira.search_issues" in self.has:
+                await adapters.fetch_jira(self.call, self.jira_projects, since, log, out)
+            else:
+                out["failed"].append({"source": "jira", "error": "jira.search_issues is not available in this run"})
+
+        async def doc_part(src_name: str, tool: str, fn: Any) -> None:
             if not any(src_name in d or (src_name == "google drive" and "drive" in d) for d in self.docs_sources):
-                continue
+                return
             if tool in self.has:
                 try:  # one docs source failing never stops the others
                     await (fn(self.call, since, log, out, self.names) if src_name == "notion" else fn(self.call, since, log, out))
@@ -101,6 +108,11 @@ class GatewaySource:
                     out["failed"].append({"source": f"docs:{src_name}", "error": adapters.explain(f"docs:{src_name}", str(e))})
             else:
                 out["failed"].append({"source": f"docs:{src_name}", "error": f"{tool} is not available in this run"})
+        # GitHub, Slack, Jira and the docs sources do not depend on each other: they run side by side (each with its own bounded pool)
+        await asyncio.gather(self._github(out, since, log), slack_part(), jira_part(),
+                             doc_part("confluence", "confluence.cql_search", adapters.fetch_confluence),
+                             doc_part("notion", "notion.search_notion_page", adapters.fetch_notion),
+                             doc_part("google drive", "drive.find_file", adapters.fetch_drive))
         if not self.docs_sources:
             out["failed"].append({"source": "docs", "error": "no docs source chosen (set docs_source to Confluence, Notion or Google Drive)"})
         return out
@@ -185,9 +197,17 @@ class GatewaySource:
         sem = asyncio.Semaphore(PARALLEL)
         picked = rows[:MAX_COMMITS_PER_REPO]
 
+        pr_shas = {str(p.get("merge_commit_sha")) for p in out["github"]["prs"] if p.get("merge_commit_sha")}
+        pr_titles = {(p.get("title") or "").strip() for p in out["github"]["prs"] if p.get("_repo") == repo}
+
+        def covered(c: dict) -> bool:
+            """Already part of one of the user's PRs (merge sha, or same title): the PR's own file list gives the size, so no get_commit call."""
+            msg = str(((c.get("commit") or {}).get("message")) or c.get("message") or "").splitlines()[:1]
+            return str(c.get("sha")) in pr_shas or bool(msg and msg[0].strip() in pr_titles)
+
         async def detail(n: int, c: dict) -> None:
             c["_repo"] = repo
-            if n < MAX_COMMIT_LOOKUPS and not c.get("files"):  # list_commits has no file list; size needs one lookup per commit
+            if n < MAX_COMMIT_LOOKUPS and not c.get("files") and not covered(c):  # list_commits has no file list; size needs one lookup per commit
                 try:
                     async with sem:
                         full = await self.call("github.get_commit", {"owner": owner, "repo": name, "ref": c.get("sha", "")})
