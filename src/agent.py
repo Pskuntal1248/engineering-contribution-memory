@@ -184,7 +184,7 @@ def make_graph(deps: Deps):
         result["page_summary"] = corpus.get("summary", "")
         result["page_sections"] = [str(sec.get("heading", "")) for sec in corpus.get("sections", [])]
         result["page_chars"] = len(outputs.to_markdown(corpus, with_tables=False))
-        outputs.write_local_copy(corpus)
+        outputs.write_local_copy(corpus, result=result)
         ctx["corpus"], ctx["result"] = corpus, result
         return {"ctx": ctx, "corpus": corpus, "result": result}
 
