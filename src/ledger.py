@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 
+from guards import TRIVIAL_TITLE
 from models import Item
 from metrics import shipped
 
@@ -17,12 +18,16 @@ def counted_label(it: Item) -> str:
             return "revert (not counted)"
         if it.meta.get("reverted"):
             return "reverted (not shipped)"
+        if it.meta.get("generated_only"):
+            return "generated or lockfile changes only (not counted)"
         return "shipped" if shipped(it) else "open or closed unmerged"
     if it.type == "commit":
         if it.meta.get("is_revert"):
             return "revert (not counted)"
         if it.meta.get("reverted"):
             return "reverted (not counted)"
+        if TRIVIAL_TITLE.search(it.title):
+            return "listed, not counted (trivial commit)"
         return "counted" if it.meta.get("mine") else ""
     return ""
 
