@@ -12,6 +12,8 @@ from guards import ToolLog, err_text
 
 Call = Callable[[str, dict], Awaitable[Any]]
 PARALLEL = 6
+BACKOFF = 1.5
+DOC_PARALLEL = 2  # Notion, Confluence and Drive tools hit rate limits when called many at once
 MAX_TICKETS = 600           # 3x the spec's 200
 MAX_TICKET_LOOKUPS = 600
 MAX_DOCS_PER_SOURCE = 120   # 3x the spec's 40
@@ -137,7 +139,7 @@ async def _gather(sem: asyncio.Semaphore, call: Call, name: str, args: dict) -> 
         except Exception as e:  # noqa: BLE001 - one retry for a transient gateway failure, never for a permission or missing-item error
             if any(k in err_text(e).lower() for k in _NO_RETRY):
                 raise
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(BACKOFF)
             return await call(name, args)
 
 
@@ -271,7 +273,7 @@ async def fetch_confluence_v2(call: Call, since: str, log: ToolLog, out: dict, f
         else:
             out["failed"].append({"source": "docs:confluence", "error": "Confluence pages were listed but the connection does not say who you are, and the pages have several authors, so yours cannot be picked out."})
             return
-    sem = asyncio.Semaphore(PARALLEL)
+    sem = asyncio.Semaphore(DOC_PARALLEL)
 
     async def labels_of(pid: str) -> list[str]:
         try:
@@ -319,7 +321,7 @@ async def fetch_confluence(call: Call, since: str, log: ToolLog, out: dict) -> N
         out["failed"].append({"source": "docs:confluence", "error": explain("docs:confluence", bad)})
         return
     hits = rows(data, "results")[:MAX_DOCS_PER_SOURCE]
-    sem = asyncio.Semaphore(PARALLEL)
+    sem = asyncio.Semaphore(DOC_PARALLEL)
 
     async def one(h: dict) -> None:
         c = h.get("content") if isinstance(h.get("content"), dict) else h
@@ -398,7 +400,7 @@ async def fetch_notion(call: Call, since: str, log: ToolLog, out: dict, names: l
         return str((x or {}).get("id", "")) if isinstance(x, dict) else ""
 
     mine = [p for p in pages if str(p.get("last_edited_time", "")) >= since and (solo or me in (uid(p.get("created_by")), uid(p.get("last_edited_by"))))][:MAX_DOCS_PER_SOURCE]
-    sem = asyncio.Semaphore(PARALLEL)
+    sem = asyncio.Semaphore(DOC_PARALLEL)
 
     def title(p: dict) -> str:
         for v in (p.get("properties") or {}).values():
@@ -434,7 +436,7 @@ async def fetch_drive(call: Call, since: str, log: ToolLog, out: dict) -> None:
         out["failed"].append({"source": "docs:drive", "error": err_text(e, 200)})
         return
     files = rows(data, "files")[:MAX_DOCS_PER_SOURCE]
-    sem = asyncio.Semaphore(PARALLEL)
+    sem = asyncio.Semaphore(DOC_PARALLEL)
 
     async def one(f: dict) -> None:
         body, body_failed = "", False
