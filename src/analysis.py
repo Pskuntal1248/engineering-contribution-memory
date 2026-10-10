@@ -63,6 +63,11 @@ def my_text(it: Item, display_names: set[str]) -> str:
     return " ".join(mine) or it.text
 
 
+def _counts_line(prs: int, tickets: int) -> str:
+    parts = [f"{n} {w}{'' if n == 1 else 's'} {v}" for n, w, v in ((prs, "PR", "shipped"), (tickets, "ticket", "done")) if n]
+    return (" and ".join(parts) + ".") if parts else ""
+
+
 def baseline_thread(it: Item, display_names: set[str]) -> tuple[Label, str]:
     t = my_text(it, display_names)
     if _DECISION.search(t):
@@ -223,7 +228,7 @@ def baseline_project_card(pid: str, ids: list[str], by_id: dict[str, Item], user
     role = cap_role("built" if prs else "contributed", ev, username)
     dates = sorted(e.date for e in ev)
     return {"project_id": pid, "name": name or pid, "goal": "not stated in the sources (model summary needed)",
-            "outcome": f"{shipped_n} PRs shipped, {sum(1 for t in tickets if t.meta.get('status','').lower() in {'done','closed','resolved'})} tickets done",
+            "outcome": _counts_line(shipped_n, sum(1 for t in tickets if t.meta.get("status", "").lower() in {"done", "closed", "resolved"})),
             "role": role, "first": dates[0][:10], "last": dates[-1][:10], "evidence": sorted(ids, key=lambda i: (by_id[i].date, i))[:60]}
 
 
