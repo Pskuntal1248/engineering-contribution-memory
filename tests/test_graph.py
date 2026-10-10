@@ -76,3 +76,9 @@ def test_no_framework_skips_gaps():
     out = run({**INP, "review_framework": ""}, {}, W1, E["week2_start"])
     assert out["result"]["evidence_gaps"] == []
     assert any("framework" in n for n in out["result"]["notes"])
+
+
+def test_typed_request_in_message_input_is_understood():
+    first = run(INP, {}, W1, E["week2_start"])
+    out = run({**INP, "message": "interview stories"}, first["memory"], W1, E["week2_start"])
+    assert out["result"]["mode"] == "interview_stories"
