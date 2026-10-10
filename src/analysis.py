@@ -43,7 +43,7 @@ class ProjectCards(BaseModel):
 
 
 class LLM(Protocol):
-    async def structured(self, schema: type[BaseModel], system: str, payload: dict[str, Any]) -> BaseModel: ...
+    async def structured(self, schema: type[BaseModel], system: str, payload: dict[str, Any], budget: Budget | None = None) -> BaseModel: ...
 
 
 # ---------------------------------------------------------------------------- baselines
@@ -170,8 +170,7 @@ async def classify_threads_with_model(llm: LLM | None, budget: Budget, threads: 
         chunk = sent[i : i + batch]
         payload = {"user_names": sorted(names), "threads": [{"thread_id": t.id, "text": t.text[:700]} for t in chunk]}
         try:
-            budget.spend()
-            res = await llm.structured(ThreadVerdicts, sys, payload)
+            res = await llm.structured(ThreadVerdicts, sys, payload, budget)
         except BudgetExceeded as e:
             notes.append(str(e))
             break
@@ -198,8 +197,7 @@ async def project_cards_with_model(llm: LLM | None, budget: Budget, base: list[d
         chunk = base[i : i + per_call]
         payload = {"projects": [{"project_id": b["project_id"], "evidence": [{"id": e, "title": by_id[e].title, "text": by_id[e].text[:220], "type": by_id[e].type} for e in b["evidence"][:25]]} for b in chunk]}
         try:
-            budget.spend()
-            res = await llm.structured(ProjectCards, sys, payload)
+            res = await llm.structured(ProjectCards, sys, payload, budget)
         except BudgetExceeded as e:
             notes.append(str(e)); break
         except Exception as e:  # noqa: BLE001
