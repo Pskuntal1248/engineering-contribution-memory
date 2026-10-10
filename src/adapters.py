@@ -373,7 +373,13 @@ async def fetch_slack_search(call: Call, picked: list[dict], since_ts: str, log:
                 out["slack"].setdefault("my_user_ids", [])
                 if h["user"] not in out["slack"]["my_user_ids"]:
                     out["slack"]["my_user_ids"].append(h["user"])  # from:me hits are the connected user's own messages
-            ts = str(h.get("thread_ts") or h.get("ts") or "")
+            mb = re.match(r"(https://[^/]+)/archives/", str(h.get("permalink") or ""))
+            if mb:
+                out["slack"]["permalink_base"] = mb.group(1)
+            ts = str(h.get("thread_ts") or "")
+            if not ts:  # search hits may only carry the thread in the permalink (?thread_ts=...); a reply must fetch its whole thread
+                mt = re.search(r"thread_ts=(\d+\.\d+)", str(h.get("permalink") or ""))
+                ts = mt.group(1) if mt else str(h.get("ts") or "")
             if ts:
                 threads[(cid, ts)] = None
     sem = asyncio.Semaphore(PARALLEL)
