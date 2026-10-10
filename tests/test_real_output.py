@@ -133,8 +133,8 @@ def test_notion_profile_and_untitled_pages_are_not_counted_as_docs():
 def test_error_text_is_clean_and_pr_and_ticket_share_one_evidence_line():
     from adapters import explain
     from outputs import block
-    msg = explain("docs:confluence", 'tool said: {"code":401,"message":"Unauthorized; scopes are insufficient for this call","details":"x"}')
-    assert "Unauthorized; scopes are insufficient for this call" in msg and not msg.rstrip(").").endswith("s")
+    msg = explain("docs:confluence", 'tool said: {"code":401,"message":"Unauthorized; token has expired for this call","details":"x"}')
+    assert "Unauthorized; token has expired for this call" in msg and not msg.rstrip(").").endswith("s")
     pr_, tk = pr(6, "AUTH-1", "Add session token refresh"), ticket("AUTH-1", "Add session token refresh")
     out = block("Project", "One sentence.", items=[pr_, tk])
     assert out.count("Add session token refresh") == 1 and "[PR #6](" in out and "[ticket](" in out
@@ -158,3 +158,31 @@ def test_review_material_is_situation_action_result_per_project_with_links():
     body = corpus["sections"][0]["body"]
     assert body.count("- Situation:") == 3 and body.count("- Action:") == 3 and body.count("- Result:") == 3
     assert body.count("Evidence:") >= 3 and "](https://" in body and "1 PRs" not in body
+
+
+def test_confluence_falls_back_to_the_pages_list_when_the_cql_search_is_refused_for_scope():
+    import asyncio
+    from adapters import fetch_confluence, explain
+    from guards import ToolLog
+    calls = []
+
+    async def call(tool, args):
+        calls.append(tool)
+        if tool == "confluence.cql_search":
+            raise RuntimeError('{"code":401,"message":"Unauthorized; scope does not match"}')
+        if tool == "confluence.get_current_user":
+            return {"data": {"account_id": "acc-me", "display_name": "Parth Singh"}}
+        if tool == "confluence.get_pages":
+            return {"data": {"results": [
+                {"id": "11", "title": "Design: ranking", "authorId": "acc-me", "createdAt": "2026-09-20T10:00:00Z", "version": {"authorId": "acc-me", "createdAt": "2026-09-21T10:00:00Z"},
+                 "body": {"storage": {"value": "<p>Ranking design for SRCH-2</p>"}}, "_links": {"webui": "/spaces/UTD/pages/11"}},
+                {"id": "12", "title": "Someone else", "authorId": "acc-x", "createdAt": "2026-09-20T10:00:00Z", "version": {"authorId": "acc-x"}, "body": {"storage": {"value": "x"}}}],
+                "_links": {"base": "https://x.atlassian.net/wiki"}}}
+        if tool == "confluence.get_labels_for_page":
+            return {"data": {"results": [{"name": "confidential"}]}}
+        raise AssertionError(tool)
+    out = {"docs": [], "failed": [], "capped": []}
+    asyncio.run(fetch_confluence(call, "2026-04-01", ToolLog(), out))
+    assert [d["id"] for d in out["docs"]] == ["11"] and out["docs"][0]["labels"] == ["confidential"] and not out["failed"]
+    assert out["docs"][0]["url"] == "https://x.atlassian.net/wiki/spaces/UTD/pages/11"
+    assert "connected but its permission scope does not match; reconnect with: gravity connect confluence" in explain("docs:confluence", '{"code":401,"message":"Unauthorized; scope does not match"}')
