@@ -223,6 +223,8 @@ class GatewaySource:
             out["slack"]["channels"] = chans
             from guards import channels_to_read, is_dm_channel
             picked, missing = channels_to_read(chans, self.slack_channels, self.include_dms, log)
+            if self.include_dms and not any(is_dm_channel(c) for c in picked):
+                out["capped"].append("include_dms=Yes but no DM was listed: add a person's Slack user ID (or *dm* for all) to the channels box to read it")
             for m in missing:
                 out["failed"].append({"source": f"slack:#{m}", "error": (
                     f"#{m} is not in the channel list of the connected Slack account ({len(chans)} channels listed, public and private). "
