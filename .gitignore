@@ -1,1 +1,7 @@
-
+__pycache__/
+.venv/
+*.pyc
+build/
+.gravity/
+requirements.lock
+.pytest_cache/
