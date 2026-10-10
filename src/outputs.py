@@ -32,7 +32,7 @@ def short(title: str, n: int = 70) -> str:
 def no_placeholders(text: str) -> str:
     """Drop clauses where the model or rules said a thing is not stated; fix the stray punctuation that leaves."""
     t = re.sub(r"[;,]?[ \t]*[^.;\n]*\b(?:not stated|model summary needed)\b[^.;\n]*", "", text, flags=re.I)
-    t = re.sub(r"\.{2,}", ".", t)
+    t = re.sub(r"(?<!\.)\.\.(?!\.)", ".", t)  # a doubled full stop becomes one; an ellipsis (...) stays
     return re.sub(r"[ \t]+([.;,])", r"\1", t).strip()
 
 
@@ -71,7 +71,7 @@ def _cite(ids: list[str], by_id: dict[str, Item], n: int = 3) -> str:
 
 
 def _lab(it: Item) -> str:
-    return short(it.title, 60).replace("[", "(").replace("]", ")") or it.id
+    return short(it.title, 90 if it.type == "thread" else 60).replace("[", "(").replace("]", ")") or it.id
 
 
 def link_line(it: Item | None) -> str:
@@ -80,15 +80,27 @@ def link_line(it: Item | None) -> str:
     return f"[{_lab(it)}]({it.url})" if it.url else _lab(it)
 
 
+def _title_key(i: Item) -> str:
+    m = re.match(r"^([A-Z][A-Z0-9]+-\d+)\b", i.title)
+    return m.group(1) if m else ""
+
+
 def _group_links(items: list[Item]) -> list[str]:
-    """One line per piece of work: a PR and its Jira ticket (same key and title) share a line with both links."""
-    def norm(i: Item) -> str:
-        m = re.match(r"^([A-Z][A-Z0-9]+-\d+)\b", i.title)
-        key = m.group(1) if m else (i.keys[0] if i.keys else "")
-        return "key:" + key if key else i.id
+    """One line per piece of work: a PR and its Jira ticket share a line with both links. A PR is paired with the ticket whose key it
+    names (its title first, then its other keys); only the PR or ticket title is shown, never an old key from a commit."""
+    tickets = {_title_key(i) or (i.keys[0] if i.keys else ""): i for i in items if i.type == "ticket"}
     groups: dict[str, list[Item]] = {}
-    for i in sorted(items, key=lambda x: (x.type != "pr", x.date)):
-        groups.setdefault(norm(i) if i.type in {"pr", "ticket"} else i.id, []).append(i)
+    for i in sorted(items, key=lambda x: (x.type != "pr", x.date, x.id)):
+        if i.type == "pr":
+            tk = _title_key(i)
+            cand = [tk] if tk and tk in tickets else [k for k in i.keys if k in tickets]
+            gk = ("key:" + cand[0]) if cand else i.id
+        elif i.type == "ticket":
+            k = _title_key(i) or (i.keys[0] if i.keys else "")
+            gk = ("key:" + k) if k else i.id
+        else:
+            gk = i.id
+        groups.setdefault(gk, []).append(i)
     names = {"pr": "PR", "ticket": "ticket", "commit": "commit", "doc": "doc", "thread": "Slack thread", "review": "review"}
     out = []
     for g in groups.values():
@@ -101,10 +113,7 @@ def _group_links(items: list[Item]) -> list[str]:
             if i.type == "pr" and i.meta.get("number"):
                 nm = f"PR #{i.meta['number']}"
             lab.append(f"[{nm}]({i.url})" if i.url else nm)
-        head = _lab(g[0])
-        if g[0].type == "pr" and g[0].keys and not head.startswith(g[0].keys[0]):
-            head = f"{g[0].keys[0]} {head}"
-        out.append(f"{head}: " + ", ".join(lab))
+        out.append(f"{_lab(g[0])}: " + ", ".join(lab))
     return out
 
 
@@ -117,7 +126,7 @@ def block(title: str, sentence: str = "", facts: list[str] | None = None, items:
         paras.append("\n".join(f"- {f}" for f in facts))
     its = [i for i in (items or []) if i]
     if its:
-        lines = _group_links(its)
+        lines = _group_links(its)[:10]
         if len(lines) == 1 and not facts:
             paras.append(lines[0])
         else:
@@ -181,7 +190,7 @@ def _st_title(s: Statement, by_id: dict[str, Item]) -> str:
 
 def sar_block(p: dict[str, Any], by_id: dict[str, Item], conf: set[str], skip: set[str] = frozenset()) -> str:
     """Situation, action, result for one project. Every line comes from the profile and the linked items below it; a line is dropped when the sources have nothing for it."""
-    ev = _ev([e for e in p["evidence"] if e not in skip], by_id, 3)
+    ev = _ev([e for e in p["evidence"] if e not in skip], by_id, 12)
     allev = [by_id[e] for e in p["evidence"] if e in by_id]
     start = next((i for i in sorted(allev, key=lambda i: (i.type != "ticket", i.date)) if i.type in {"ticket", "pr"}), None)
     situation = p["goal"] if p.get("goal") and not _PLACEHOLDER.search(p["goal"]) else (f"It started with {short(start.title, 90)}." if start else "")
@@ -376,7 +385,7 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
             inv.append(f"Unticketed debugging and fixes ({len(slack_fixes)}) are listed once, under Problems solved.")
         sections += [
             blocks_sec("Projects", [block(f"{p['name']} ({_span(p)})", p["outcome"] if not _PLACEHOLDER.search(p["outcome"]) else "",
-                                          facts=_project_facts(p) + _thread_facts(p["evidence"], by_id, {x for v in profile["invisible"] for x in v["evidence"]}), items=_ev([e for e in p["evidence"] if e not in {x for d in profile["decisions"] for x in d["evidence"]} and by_id[e].type != "thread"], by_id, 4) + [by_id[e] for e in p["evidence"] if e in by_id and by_id[e].type == "thread" and e not in {x for v in profile["invisible"] for x in v["evidence"]}][:2]) for p in profile["projects"]],
+                                          facts=_project_facts(p) + _thread_facts(p["evidence"], by_id, {x for v in profile["invisible"] for x in v["evidence"]}), items=_ev([e for e in p["evidence"] if e not in {x for d in profile["decisions"] for x in d["evidence"]} and by_id[e].type != "thread"], by_id, 14) + [by_id[e] for e in p["evidence"] if e in by_id and by_id[e].type == "thread" and e not in {x for v in profile["invisible"] for x in v["evidence"]}][:2]) for p in profile["projects"]],
                        "None found: no group of two or more linked PRs, tickets or docs yet."),
             blocks_sec("Problems solved", solved, "None found: no fix or debugging work with your part in it."),
             blocks_sec("Decisions", [block(d["title"], f"My role: {d['role']}." + ("" if _PLACEHOLDER.search(d["summary"]) else f" {d['summary']}"), items=_ev(d["evidence"], by_id, 1)) for d in profile["decisions"]],
@@ -410,9 +419,9 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
         st = stories(profile, by_id, terms, keep_internal)
         sections.insert(0, {"heading": "Interview stories", "sections": [{"heading": x["title"], "body": x["story"], "bullets": [f"Answers: {x['question']}"] + [f"Evidence: [{scrub(_lab(i), terms, keep_internal)}]({i.url})" if i.url else f"Evidence: {scrub(_lab(i), terms, keep_internal)}" for i in _ev(x["evidence"], by_id, 2)]} for x in st]})
         sections.insert(1, {"heading": "Coverage", "body": f"{len(st)} stor{'y has' if len(st) == 1 else 'ies have'} evidence behind them. Stories for a disagreement are only included when a thread or PR discussion shows one; none is invented."})
-    short_notes = [f"{f['source']}: {clip(f["error"], 220)}" for f in failed] + [clip(n, 220) for n in run_notes if not n.startswith(("topic grouping used", "capped: notion: single"))]
+    short_notes = [f"{f['source']}: {clip(f["error"], 420)}" for f in failed] + [n for n in run_notes if not n.startswith(("topic grouping used", "capped: notion: single"))]
     if short_notes:
-        sections.append({"heading": "What could not be done", "bullets": short_notes[:4]})
+        sections.append({"heading": "What could not be done", "bullets": short_notes[:6]})
     sections = [s_ for s_ in sections if s_.get("bullets") or s_.get("table") or s_.get("body") or s_.get("sections") or s_.get("facts")]
     # The platform's CSV export is the FIRST TABLE in the corpus, so the ledger is the only table and sits last (an appendix).
     sections.append({"heading": "Appendix: item ledger (also the CSV download)",
