@@ -228,28 +228,40 @@ async def probe_confluence(call: Call, log: ToolLog) -> str:
 async def fetch_confluence_v2(call: Call, since: str, log: ToolLog, out: dict, first_error: str) -> None:
     """Fallback when the CQL search (Confluence REST v1) is refused for scope: list recent pages through the v2 pages tool and keep
     the ones the connected user wrote or last edited. If that is refused too, say so plainly; the user needs to reconnect."""
-    try:
+    mine_ids: set[str] = set()
+    my_name = ""
+    try:  # who the connection is; some connections refuse this call while the pages list still works
         log.add("confluence.get_current_user")
         me = await call("confluence.get_current_user", {})
-        acct = find_key(me, "account_id", "accountId")
+        acct = None if failed_payload(me) else find_key(me, "account_id", "accountId")
         mine_ids = {str(acct)} if acct else set()
         my_name = str(find_key(me, "display_name", "displayName", "public_name", "publicName") or "")
-    except Exception as e:  # noqa: BLE001
-        out["failed"].append({"source": "docs:confluence", "error": explain("docs:confluence", first_error) + " " + await probe_confluence(call, log)})
-        return
-    if not mine_ids:
-        out["failed"].append({"source": "docs:confluence", "error": "Confluence is connected but did not say who you are, so your pages cannot be picked out. Reconnect with gravity connect confluence."})
-        return
+    except Exception:  # noqa: BLE001
+        pass
     try:
         log.add("confluence.get_pages")
-        data = await call("confluence.get_pages", {"sort": "-modified-date", "limit": 100, "status": "current", "body_format": "storage"})
+        try:
+            data = await call("confluence.get_pages", {"sort": "-modified-date", "limit": 100, "status": "current", "body_format": "storage"})
+            if failed_payload(data):
+                raise RuntimeError(failed_payload(data))
+        except Exception:  # noqa: BLE001 - a plain list call, in case an option was refused
+            data = await call("confluence.get_pages", {"limit": 100})
     except Exception as e:  # noqa: BLE001
-        out["failed"].append({"source": "docs:confluence", "error": explain("docs:confluence", str(e)) + " " + await probe_confluence(call, log)})
+        out["failed"].append({"source": "docs:confluence", "error": explain("docs:confluence", str(e)).rstrip(". ") + ". " + await probe_confluence(call, log)})
         return
     bad = failed_payload(data)
     if bad:
-        out["failed"].append({"source": "docs:confluence", "error": explain("docs:confluence", bad) + " " + await probe_confluence(call, log)})
+        out["failed"].append({"source": "docs:confluence", "error": explain("docs:confluence", bad).rstrip(". ") + ". " + await probe_confluence(call, log)})
         return
+    listed = rows(data, "results")
+    solo_note = False
+    if not mine_ids:
+        authors = {str(h.get("authorId") or "") for h in listed if h.get("authorId")}
+        if len(authors) == 1:  # one author on every visible page: that is the connected account
+            mine_ids, solo_note = set(authors), True
+        else:
+            out["failed"].append({"source": "docs:confluence", "error": "Confluence pages were listed but the connection does not say who you are, and the pages have several authors, so yours cannot be picked out."})
+            return
     sem = asyncio.Semaphore(PARALLEL)
 
     async def labels_of(pid: str) -> list[str]:
@@ -275,7 +287,8 @@ async def fetch_confluence_v2(call: Call, since: str, log: ToolLog, out: dict, f
             "labels": await labels_of(str(h.get("id", ""))), "author": my_name if author_id in mine_ids else "", "editors": [my_name] if editor_id in mine_ids else [],
             "created": str(h.get("createdAt") or ""), "modified": modified, "url": (base + web) if web.startswith("/") and base else web,
             "_mine": True, "kind": "confluence page"})
-    out.setdefault("capped", []).append("confluence: read through the pages list (the CQL search was refused); only the 100 most recently edited pages were checked")
+    out.setdefault("capped", []).append("confluence: read through the pages list (the CQL search was refused); only the 100 most recently edited pages were checked"
+                                        + ("; the connection did not name you, so the pages are those of the one author visible" if solo_note else ""))
 
 
 async def fetch_confluence(call: Call, since: str, log: ToolLog, out: dict) -> None:
