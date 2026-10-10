@@ -109,7 +109,7 @@ def test_slack_items_get_a_real_title_and_link_and_the_page_has_blocks_with_link
     import normalize as N
     msgs = [{"ts": "1791641890.36", "user": "U1", "text": "Settlement totals mismatch for the 18 Sep batch, looks like a timezone problem"}]
     it = N.normalize_thread("uc10-test", "G1", msgs, {"U1"}, "https://the-glider.slack.com")
-    assert it.title == "Settlement totals mismatch for the 18 Sep batch" and it.url == "https://the-glider.slack.com/archives/G1/p179164189036"
+    assert it.title == "Settlement totals mismatch for the 18 Sep batch, looks like a timezone problem" and it.url == "https://the-glider.slack.com/archives/G1/p179164189036"
     assert N.normalize_thread("uc10-test", "G1", msgs, {"U1"}).url.startswith("https://slack.com/app_redirect?channel=G1&message_ts=")
     items = merge_threads(WORK + [Item(**t.__dict__) for t in FOUR])
     corpus, _ = corpus_for("backfill", profile(items), items, title="t", terms=set(), keep_internal=False, colleagues=[], names=NAMES,
