@@ -200,3 +200,45 @@ def test_one_on_one_decisions_open_only_when_source_says_so_wins_all_with_what_i
 def test_docs_by_source_uses_the_id_not_an_empty_meta():
     import agent
     assert agent._docs_sources("Confluence + Notion") == ["confluence", "notion"]
+
+
+def test_decision_sentence_skips_page_header_and_never_cuts_mid_word():
+    from analysis import decision_sentence, decision_owner
+    t = "Owner: Parth Singh Context The search service (tracked in SRCH-2) needs a better ranking for short queries. Decision We will rank with a two stage approach: recall first, then rerank by freshness. Consequences more latency."
+    assert decision_sentence(t) == "We will rank with a two stage approach: recall first, then rerank by freshness."
+    t2 = "Owner: Parth Singh Context The search service needs a better ranking for short queries and we looked at options for it."
+    assert decision_sentence(t2).startswith("The search service needs") and "Owner" not in decision_sentence(t2)
+    assert decision_owner(t) == "Parth Singh"
+
+
+def test_owner_on_the_page_makes_the_role_led():
+    from analysis import find_decisions
+    d = Item(id="doc:c:1", source="doc", type="doc", date="2026-09-20", title="Design: Search ranking approach", author="", text="Owner: Parth Singh Context We need ranking.", meta={"mine": True})
+    out = find_decisions([d], {"Parth Singh"}, "Pskuntal1248")
+    assert out and out[0]["role"] == "led"
+
+
+def test_docs_only_pr_is_not_shipped_and_what_it_did_strips_the_key():
+    raw = {"number": 9, "title": "docs: ADR-001 move webhooks to a queue", "user": {"login": "u"}, "created_at": "2026-09-20T10:00:00Z", "merged_at": "2026-09-20T11:00:00Z",
+           "files": [{"filename": "docs/adr/001.md", "additions": 3}], "body": "Proposes ADR-001."}
+    it = N.normalize_pr(raw, "o/r", "u")
+    from metrics import shipped
+    assert it.meta["docs_only"] and not shipped(it)
+    pr = Item(id="p", source="github", type="pr", date="2026-09-01", title="PAY-1 Add idempotency key", text="PAY-1: payouts could be created twice when a client retried a timed out call. More text.", keys=["PAY-1"], meta={"number": 1})
+    assert O._what_it_did(pr, {"p": pr}) == " What it did: Payouts could be created twice when a client retried a timed out call."
+    block = O.block("PAY-1 Add idempotency key", "x", items=[pr, Item(id="t", source="jira", type="ticket", date="2026-08-30", title="PAY-1: Add idempotency key", url="u2", keys=["PAY-1"], meta={})])
+    assert block.splitlines()[-1].startswith("PR #1") or "[PR #1]" in block.splitlines()[-1] and "Add idempotency" not in block.splitlines()[-1]
+
+
+def test_project_names_are_reused_from_the_backfill_in_later_modes():
+    import asyncio
+    from test_real_output import WORK, FOUR, NAMES, ME
+    from eprofile import build
+    from guards import budget_for
+    items = WORK + FOUR
+    mk = lambda reuse, prior: asyncio.run(build(items, username=ME, names=NAMES, llm=None, budget=budget_for("backfill"), framework="", role_and_level="Software Engineer", prior=prior, reuse_names=reuse))
+    first = mk(False, None)
+    stored = [dict(c, name="Saved " + c["name"]) for c in first["card_store"]]
+    again = mk(True, {"cards": stored})
+    assert [p["name"] for p in again["projects"]] == ["Saved " + p["name"] for p in first["projects"]]
+    assert [p["name"] for p in mk(False, {"cards": stored})["projects"]] == [p["name"] for p in first["projects"]]  # a backfill renames freely
