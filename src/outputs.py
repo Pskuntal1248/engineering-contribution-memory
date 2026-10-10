@@ -83,10 +83,11 @@ def link_line(it: Item | None) -> str:
 def _group_links(items: list[Item]) -> list[str]:
     """One line per piece of work: a PR and its Jira ticket (same key and title) share a line with both links."""
     def norm(i: Item) -> str:
-        t = re.sub(r"^[A-Z][A-Z0-9]+-\d+[:\s-]*", "", i.title).strip().lower()
-        return (i.keys[0] if i.keys else "") + "|" + t
+        m = re.match(r"^([A-Z][A-Z0-9]+-\d+)\b", i.title)
+        key = m.group(1) if m else (i.keys[0] if i.keys else "")
+        return "key:" + key if key else i.id
     groups: dict[str, list[Item]] = {}
-    for i in items:
+    for i in sorted(items, key=lambda x: (x.type != "pr", x.date)):
         groups.setdefault(norm(i) if i.type in {"pr", "ticket"} else i.id, []).append(i)
     names = {"pr": "PR", "ticket": "ticket", "commit": "commit", "doc": "doc", "thread": "Slack thread", "review": "review"}
     out = []
@@ -100,7 +101,10 @@ def _group_links(items: list[Item]) -> list[str]:
             if i.type == "pr" and i.meta.get("number"):
                 nm = f"PR #{i.meta['number']}"
             lab.append(f"[{nm}]({i.url})" if i.url else nm)
-        out.append(f"{_lab(g[0])}: " + ", ".join(lab))
+        head = _lab(g[0])
+        if g[0].type == "pr" and g[0].keys and not head.startswith(g[0].keys[0]):
+            head = f"{g[0].keys[0]} {head}"
+        out.append(f"{head}: " + ", ".join(lab))
     return out
 
 
@@ -119,6 +123,21 @@ def block(title: str, sentence: str = "", facts: list[str] | None = None, items:
         else:
             paras.append(f"{label}:\n" + "\n".join(f"- {x}" for x in lines))
     return "\n\n".join(paras)
+
+
+def _inv_note(profile: dict[str, Any]) -> str:
+    n = sum(1 for v in profile["invisible"] if v["label"] == "problem_solved")
+    return f" ({n} listed under Problems solved)" if n else ""
+
+
+def _thread_facts(ids: list[str], by_id: dict[str, Item], skip: set[str]) -> list[str]:
+    out = []
+    for e in ids:
+        it = by_id.get(e)
+        if it and it.type == "thread" and e not in skip:
+            body = " ".join(l.split(": ", 1)[1] if ": " in l[:40] else l for l in it.text.splitlines())
+            out.append(f"Slack, {it.date[:10]}: {clip(re.sub(chr(32) + '+', chr(32), body).strip(), 160)}")
+    return out[:2]
 
 
 def _type_counts(items: list[Item]) -> list[tuple[str, int]]:
@@ -357,17 +376,22 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
             inv.append(f"Unticketed debugging and fixes ({len(slack_fixes)}) are listed once, under Problems solved.")
         sections += [
             blocks_sec("Projects", [block(f"{p['name']} ({_span(p)})", p["outcome"] if not _PLACEHOLDER.search(p["outcome"]) else "",
-                                          facts=_project_facts(p), items=_ev([e for e in p["evidence"] if e not in {x for d in profile["decisions"] for x in d["evidence"]}], by_id, 4)) for p in profile["projects"]],
+                                          facts=_project_facts(p) + _thread_facts(p["evidence"], by_id, {x for v in profile["invisible"] for x in v["evidence"]}), items=_ev([e for e in p["evidence"] if e not in {x for d in profile["decisions"] for x in d["evidence"]} and by_id[e].type != "thread"], by_id, 4) + [by_id[e] for e in p["evidence"] if e in by_id and by_id[e].type == "thread" and e not in {x for v in profile["invisible"] for x in v["evidence"]}][:2]) for p in profile["projects"]],
                        "None found: no group of two or more linked PRs, tickets or docs yet."),
             blocks_sec("Problems solved", solved, "None found: no fix or debugging work with your part in it."),
             blocks_sec("Decisions", [block(d["title"], f"My role: {d['role']}." + ("" if _PLACEHOLDER.search(d["summary"]) else f" {d['summary']}"), items=_ev(d["evidence"], by_id, 1)) for d in profile["decisions"]],
                        "None found: no design doc, ADR or approach-chosen thread."),
             blocks_sec("Invisible work", inv, "None found: no Slack thread with your work that lacks a ticket or PR."),
-            blocks_sec("Skills", [block(k["skill"], f"{k['count']} piece{'' if k['count'] == 1 else 's'} of work show this.", items=_ev(k["evidence"], by_id, 2), label="For example") for k in profile["skills"]],
+            blocks_sec("Skills", [block(k["skill"], f"{k['count']} piece{'' if k['count'] == 1 else 's'} of work {'shows' if k['count'] == 1 else 'show'} this.", items=_ev(k["evidence"], by_id, 2), label="For example") for k in profile["skills"]],
                        "None found: not enough evidence text to map skills."),
             blocks_sec("Improvement areas", [block(a["label"], f"This came up {a['count']} times in review feedback.", items=_ev(a["item_ids"], by_id, 3)) for a in profile["improvements"]],
                        "None found: no feedback pattern repeated 3 or more times."),
         ]
+    if kind in {"backfill", "profile"}:
+        shown = " ".join(str(s_.get("body", "")) + " ".join(map(str, s_.get("bullets", []) or [])) for s_ in sections)
+        rest_ = [i for i in sorted(items, key=lambda x: x.date) if i.type == "thread" and i.meta.get("mine") and i.url and i.url not in shown]
+        if rest_:
+            sections.append(blocks_sec("Other Slack conversations", [block(i.title, clip(re.sub(r"\s+", " ", " ".join(l.split(": ", 1)[1] if ": " in l[:40] else l for l in i.text.splitlines())), 200), facts=[f"{i.date[:10]}"], items=[i]) for i in rest_], ""))
     if kind in {"backfill", "profile", "evidence_gaps"}:
         gaps = profile["gaps"]
         sections.append(blocks_sec("Evidence gaps", [block(g["expectation"], f"Level: {g['level']}. Status: {g['status']}." + ("" if g["evidence"] else " No items found."), items=_ev(g["evidence"], by_id, 3)) for g in gaps],
@@ -395,7 +419,7 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
                      "body": f"{len(rows)} items: " + ", ".join(f"{n} {t}{'' if n == 1 else 's'}" for t, n in _type_counts(items)) + (f" (newest {LEDGER_CAP} of {len(items)})" if trunc else "")
                      + ". A PR, its commits and its ticket are separate rows for the same change. Reverts, reverted PRs, lockfile-only PRs and trivial commits are listed but not counted.",
                      "table": {"columns": ledger.COLUMNS, "rows": rows}})
-    corpus = {"title": title, "summary": f"{s['prs_shipped']} PR{'' if s['prs_shipped'] == 1 else 's'} shipped, {s['reviews_given']} review{'' if s['reviews_given'] == 1 else 's'}, {len(profile['invisible'])} piece{'' if len(profile['invisible']) == 1 else 's'} of invisible work, {len(profile['decisions'])} decision{'' if len(profile['decisions']) == 1 else 's'}. Every item below links to its source.",
+    corpus = {"title": title, "summary": f"{s['prs_shipped']} PR{'' if s['prs_shipped'] == 1 else 's'} shipped, {s['reviews_given']} review{'' if s['reviews_given'] == 1 else 's'}, {len(profile['invisible'])} piece{'' if len(profile['invisible']) == 1 else 's'} of invisible work{_inv_note(profile)}, {len(profile['decisions'])} decision{'' if len(profile['decisions']) == 1 else 's'}. Every item below links to its source.",
               "sections": sections, "sources": sources_for(items)}
     corpus = _clean_obj(corpus)
     result = {"title": title, "mode": kind, "stats": s, "projects": len(profile["projects"]), "invisible_work": len(profile["invisible"]),
