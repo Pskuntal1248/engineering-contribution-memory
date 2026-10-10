@@ -121,6 +121,27 @@ def block(title: str, sentence: str = "", facts: list[str] | None = None, items:
     return "\n\n".join(paras)
 
 
+def _type_counts(items: list[Item]) -> list[tuple[str, int]]:
+    names = {"pr": "PR", "ticket": "ticket", "commit": "commit", "thread": "Slack conversation", "doc": "doc", "review": "review"}
+    c: dict[str, int] = {}
+    for i in items:
+        c[names.get(i.type, i.type)] = c.get(names.get(i.type, i.type), 0) + 1
+    return sorted(c.items(), key=lambda kv: -kv[1])
+
+
+def _span(p: dict[str, Any]) -> str:
+    return p["first"] if p["first"] == p["last"] else f"{p['first']} to {p['last']}"
+
+
+def _drop_unknown_keys(text: str, known: set[str]) -> str:
+    """Ticket keys in model or document text that were not found as real tickets are removed (a doc can mention a key that never existed)."""
+    def repl(m: re.Match) -> str:
+        return m.group(0) if m.group(1) in known else ""
+    t = re.sub(r"[,;]?[ \t]*\b([A-Z][A-Z0-9]+-\d+)\b", repl, text or "")
+    t = re.sub(r"\b(Related|See|Refs?|Links?)\s*[:,]?\s*(?=[.;]|$)", "", t)
+    return re.sub(r"\s+([.,;])", r"\1", re.sub(r"[ \t]{2,}", " ", t)).strip()
+
+
 def _project_facts(p: dict[str, Any]) -> list[str]:
     facts = []
     if p.get("goal") and not _PLACEHOLDER.search(p["goal"]):
@@ -139,15 +160,19 @@ def _st_title(s: Statement, by_id: dict[str, Item]) -> str:
     return short(it.title, 70) if it and it.type in {"thread", "doc", "pr", "ticket"} else short(s.text.split(":")[0], 70)
 
 
-def sar_block(p: dict[str, Any], by_id: dict[str, Item], conf: set[str]) -> str:
-    """Situation, action, result for one project. Only what the sources say; each line is dropped if the profile has nothing for it."""
-    situation = p["goal"] if p.get("goal") and not _PLACEHOLDER.search(p["goal"]) else f"Work on {p['name']}, {p['first']} to {p['last']}."
+def sar_block(p: dict[str, Any], by_id: dict[str, Item], conf: set[str], skip: set[str] = frozenset()) -> str:
+    """Situation, action, result for one project. Every line comes from the profile and the linked items below it; a line is dropped when the sources have nothing for it."""
+    ev = _ev([e for e in p["evidence"] if e not in skip], by_id, 3)
+    allev = [by_id[e] for e in p["evidence"] if e in by_id]
+    start = next((i for i in sorted(allev, key=lambda i: (i.type != "ticket", i.date)) if i.type in {"ticket", "pr"}), None)
+    situation = p["goal"] if p.get("goal") and not _PLACEHOLDER.search(p["goal"]) else (f"It started with {short(start.title, 90)}." if start else "")
     co = f", with {', '.join(p['co_contributors'][:3])}" if p.get("co_contributors") else ""
-    action = f"{_ACTION.get(p['role'], 'I contributed to it')}{co}."
+    mine_prs = sum(1 for i in allev if i.type == "pr" and i.meta.get("mine"))
+    action = f"{_ACTION.get(p['role'], 'I contributed to it')}{co}" + (f" and authored {mine_prs} PR{'' if mine_prs == 1 else 's'}" if mine_prs else "") + "."
     result = p["outcome"] if p.get("outcome") and not _PLACEHOLDER.search(p["outcome"]) else ""
     flag = (FLAG + " ") if any(e in conf for e in p["evidence"]) else ""
-    lines = [f"- Situation: {clip(situation, 200)}", f"- Action: {action}"] + ([f"- Result: {clip(result, 200)}"] if result else [])
-    return block(flag + p["name"], "", facts=None, items=None) + "\n\n" + "\n".join(lines) + "\n\nEvidence:\n" + "\n".join(f"- {x}" for x in _group_links(_ev(p["evidence"], by_id, 3)))
+    lines = ([f"- Situation: {clip(situation, 200)}"] if situation else []) + [f"- Action: {action}"] + ([f"- Result: {clip(result, 200)}"] if result else [])
+    return f"**{flag}{p['name']}**\n\n" + "\n".join(lines) + "\n\nEvidence:\n" + "\n".join(f"- {x}" for x in _group_links(ev))
 
 
 def blocks_sec(heading: str, blocks: list[str], none: str) -> dict[str, Any]:
@@ -296,6 +321,11 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
                colleagues: list[str], names: set[str], date_from: str, date_to: str, run_notes: list[str],
                failed: list[dict], quiet_line: str | None, new_ids: set[str]) -> tuple[dict[str, Any], dict[str, Any]]:
     by_id = {i.id: i for i in items}
+    known_keys = {k for i in items if i.type == "ticket" for k in i.keys}
+    for d in profile["decisions"]:
+        d["summary"] = _drop_unknown_keys(d["summary"], known_keys)
+    for p_ in profile["projects"]:
+        p_["goal"], p_["outcome"] = _drop_unknown_keys(p_["goal"], known_keys), _drop_unknown_keys(p_["outcome"], known_keys)
     s = profile["stats"]
     rows, trunc = ledger.rows(items, profile["project_of"], LEDGER_CAP)
     pname = {p["project_id"]: p["name"] for p in profile["projects"]}
@@ -316,26 +346,24 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
                  and (shipped(i) if i.type == "pr" else str(i.meta.get("status", "")).lower() in {"done", "closed", "resolved"})]
         slack_fixes = [v for v in profile["invisible"] if v["label"] == "problem_solved"]
         solved = [block(short(i.title, 80), f"I fixed this and it shipped on {i.date[:10]}.", items=[i]) for i in sorted(fixes, key=lambda x: x.date)[:8]]
-        solved += [block(by_id[v["evidence"][0]].title, f"I traced and fixed a problem on {by_id[v['evidence'][0]].date[:10]}, with no ticket raised: {v['summary']}", items=[by_id[v["evidence"][0]]])
-                   for v in slack_fixes if v["evidence"] and v["evidence"][0] in by_id]
-        pointer = {"problem_solved": "Listed under Problems solved."}
-        inv = []
-        for v in profile["invisible"]:
-            it = by_id.get(v["evidence"][0]) if v["evidence"] else None
-            if not it:
-                continue
-            what = {"mentoring": "I mentored a teammate", "help_given": "I helped a teammate", "problem_solved": "I fixed a problem"}.get(v["label"], "I helped")
-            inv.append(block(it.title, pointer.get(v["label"]) or f"{what} on {it.date[:10]}: {v['summary']}", items=[it]) if v["label"] != "problem_solved"
-                       else block(it.title, f"{what} on {it.date[:10]}. Details are under Problems solved.", items=[it]))
+        def _thread_block(v: dict[str, Any]) -> str:
+            it = by_id[v["evidence"][0]]
+            co = [c for c in v.get("co_contributors", []) if not _SLACK_ID.fullmatch(c)][:2]
+            summ = re.sub(r"\s+", " ", v["summary"]).strip()
+            return block(it.title, summ, facts=[f"{it.date[:10]}, no ticket raised" + (f", with {', '.join(co)}" if co else "")], items=[it])
+        solved += [_thread_block(v) for v in slack_fixes if v["evidence"] and v["evidence"][0] in by_id]
+        inv = [_thread_block(v) for v in profile["invisible"] if v["label"] != "problem_solved" and v["evidence"] and v["evidence"][0] in by_id]
+        if slack_fixes:
+            inv.append(f"Unticketed debugging and fixes ({len(slack_fixes)}) are listed once, under Problems solved.")
         sections += [
-            blocks_sec("Projects", [block(f"{p['name']} ({p['first']} to {p['last']})", p["outcome"] if not _PLACEHOLDER.search(p["outcome"]) else "",
-                                          facts=_project_facts(p), items=_ev(p["evidence"], by_id, 4)) for p in profile["projects"]],
+            blocks_sec("Projects", [block(f"{p['name']} ({_span(p)})", p["outcome"] if not _PLACEHOLDER.search(p["outcome"]) else "",
+                                          facts=_project_facts(p), items=_ev([e for e in p["evidence"] if e not in {x for d in profile["decisions"] for x in d["evidence"]}], by_id, 4)) for p in profile["projects"]],
                        "None found: no group of two or more linked PRs, tickets or docs yet."),
             blocks_sec("Problems solved", solved, "None found: no fix or debugging work with your part in it."),
             blocks_sec("Decisions", [block(d["title"], f"My role: {d['role']}." + ("" if _PLACEHOLDER.search(d["summary"]) else f" {d['summary']}"), items=_ev(d["evidence"], by_id, 1)) for d in profile["decisions"]],
                        "None found: no design doc, ADR or approach-chosen thread."),
             blocks_sec("Invisible work", inv, "None found: no Slack thread with your work that lacks a ticket or PR."),
-            blocks_sec("Skills", [block(k["skill"], f"{k['count']} item(s) show this.", items=_ev(k["evidence"], by_id, 2), label="For example") for k in profile["skills"]],
+            blocks_sec("Skills", [block(k["skill"], f"{k['count']} piece{'' if k['count'] == 1 else 's'} of work show this.", items=_ev(k["evidence"], by_id, 2), label="For example") for k in profile["skills"]],
                        "None found: not enough evidence text to map skills."),
             blocks_sec("Improvement areas", [block(a["label"], f"This came up {a['count']} times in review feedback.", items=_ev(a["item_ids"], by_id, 3)) for a in profile["improvements"]],
                        "None found: no feedback pattern repeated 3 or more times."),
@@ -348,7 +376,8 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
         sections = one_on_one(profile, by_id, sts)
     if kind == "review_material":
         conf_ = set(profile.get("confidential", []))
-        proj_ = [sar_block(p, by_id, conf_) for p in profile["projects"] if (not (date_from or date_to)) or any(
+        dec_ids = {e for d in profile["decisions"] for e in d["evidence"]}
+        proj_ = [sar_block(p, by_id, conf_, dec_ids) for p in profile["projects"] if (not (date_from or date_to)) or any(
             (not date_from or by_id[e].date[:10] >= date_from) and (not date_to or by_id[e].date[:10] <= date_to) for e in p["evidence"] if e in by_id)]
         other = build_statements(profile, by_id, "review_material", names, colleagues, date_from, date_to, with_projects=False)
         sections.insert(0, {"heading": f"Impact statements {date_from or 'all'} to {date_to or 'now'}",
@@ -363,9 +392,10 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
     sections = [s_ for s_ in sections if s_.get("bullets") or s_.get("table") or s_.get("body") or s_.get("sections") or s_.get("facts")]
     # The platform's CSV export is the FIRST TABLE in the corpus, so the ledger is the only table and sits last (an appendix).
     sections.append({"heading": "Appendix: item ledger (also the CSV download)",
-                     "body": f"{len(rows)} items" + (f" (newest {LEDGER_CAP} of {len(items)})" if trunc else "") + ". Reverts and reverted PRs are listed but not counted as shipped.",
+                     "body": f"{len(rows)} items: " + ", ".join(f"{n} {t}{'' if n == 1 else 's'}" for t, n in _type_counts(items)) + (f" (newest {LEDGER_CAP} of {len(items)})" if trunc else "")
+                     + ". A PR, its commits and its ticket are separate rows for the same change. Reverts, reverted PRs, lockfile-only PRs and trivial commits are listed but not counted.",
                      "table": {"columns": ledger.COLUMNS, "rows": rows}})
-    corpus = {"title": title, "summary": f"{s['prs_shipped']} PRs shipped, {s['reviews_given']} reviews, {len(profile['invisible'])} pieces of invisible work, {len(profile['decisions'])} decisions. Every item below links to its source.",
+    corpus = {"title": title, "summary": f"{s['prs_shipped']} PR{'' if s['prs_shipped'] == 1 else 's'} shipped, {s['reviews_given']} review{'' if s['reviews_given'] == 1 else 's'}, {len(profile['invisible'])} piece{'' if len(profile['invisible']) == 1 else 's'} of invisible work, {len(profile['decisions'])} decision{'' if len(profile['decisions']) == 1 else 's'}. Every item below links to its source.",
               "sections": sections, "sources": sources_for(items)}
     corpus = _clean_obj(corpus)
     result = {"title": title, "mode": kind, "stats": s, "projects": len(profile["projects"]), "invisible_work": len(profile["invisible"]),
