@@ -101,6 +101,7 @@ inputs:
 permissions:
   tools:
     - github.search_issues
+    - github.list_pull_requests
     - github.list_pr_files
     - github.list_pr_reviews
     - github.list_commits
