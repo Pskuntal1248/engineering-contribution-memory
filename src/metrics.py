@@ -6,6 +6,7 @@ from collections import Counter, defaultdict
 from statistics import median
 from typing import Any
 
+from guards import TRIVIAL_TITLE
 from models import Item
 
 # Review-feedback themes counted in code. The model may word the finding; it never counts it.
@@ -20,7 +21,7 @@ _COMPILED = {k: (label, [re.compile(p, re.I) for p in pats]) for k, (label, pats
 
 
 def shipped(item: Item) -> bool:
-    return item.type == "pr" and bool(item.meta.get("merged_flag")) and not item.meta.get("reverted") and not item.meta.get("is_revert")
+    return item.type == "pr" and bool(item.meta.get("merged_flag")) and not item.meta.get("reverted") and not item.meta.get("is_revert") and not item.meta.get("generated_only")
 
 
 def contribution_size(item: Item) -> int:
@@ -38,7 +39,7 @@ def pr_stats(items: list[Item]) -> dict[str, Any]:
     return {
         "prs_authored": len(mine),
         "prs_shipped": sum(1 for i in mine if shipped(i)),
-        "commits_authored": sum(1 for i in items if i.type == "commit" and i.meta.get("mine") and not i.meta.get("is_revert") and not i.meta.get("reverted")),
+        "commits_authored": sum(1 for i in items if i.type == "commit" and i.meta.get("mine") and not i.meta.get("is_revert") and not i.meta.get("reverted") and not TRIVIAL_TITLE.search(i.title)),
         "prs_reverted": sum(1 for i in mine if i.meta.get("reverted")),
         "median_cycle_hours": round(median(cyc), 1) if cyc else None,
         "reviews_given": sum(1 for i in items if i.type == "review" and i.meta.get("mine")),
