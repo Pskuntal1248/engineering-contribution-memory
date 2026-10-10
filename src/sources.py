@@ -95,7 +95,10 @@ class GatewaySource:
             if not any(src_name in d or (src_name == "google drive" and "drive" in d) for d in self.docs_sources):
                 continue
             if tool in self.has:
-                await (fn(self.call, since, log, out, self.names) if src_name == "notion" else fn(self.call, since, log, out))
+                try:  # one docs source failing never stops the others
+                    await (fn(self.call, since, log, out, self.names) if src_name == "notion" else fn(self.call, since, log, out))
+                except Exception as e:  # noqa: BLE001
+                    out["failed"].append({"source": f"docs:{src_name}", "error": adapters.explain(f"docs:{src_name}", str(e))})
             else:
                 out["failed"].append({"source": f"docs:{src_name}", "error": f"{tool} is not available in this run"})
         if not self.docs_sources:
