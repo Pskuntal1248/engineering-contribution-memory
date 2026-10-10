@@ -8,7 +8,7 @@ import asyncio
 import json
 from typing import Any, Awaitable, Callable, Protocol
 
-from guards import ToolLog
+from guards import ToolLog, err_text
 
 Call = Callable[[str, dict], Awaitable[Any]]  # call("github.list_pr_reviews", {...}) -> parsed payload
 
@@ -105,7 +105,7 @@ class GatewaySource:
                 try:  # one docs source failing never stops the others
                     await (fn(self.call, since, log, out, self.names) if src_name == "notion" else fn(self.call, since, log, out))
                 except Exception as e:  # noqa: BLE001
-                    out["failed"].append({"source": f"docs:{src_name}", "error": adapters.explain(f"docs:{src_name}", str(e))})
+                    out["failed"].append({"source": f"docs:{src_name}", "error": adapters.explain(f"docs:{src_name}", err_text(e, 400))})
             else:
                 out["failed"].append({"source": f"docs:{src_name}", "error": f"{tool} is not available in this run"})
         # GitHub, Slack, Jira and the docs sources do not depend on each other: they run side by side (each with its own bounded pool)
@@ -122,7 +122,7 @@ class GatewaySource:
             try:
                 await self._github_repo(out, repo, since, log)
             except Exception as e:  # noqa: BLE001
-                out["failed"].append({"source": f"github:{repo}", "error": str(e)[:200]})
+                out["failed"].append({"source": f"github:{repo}", "error": err_text(e, 200)})
         if len(out["github"]["prs"]) >= MAX_PRS_PER_REPO * len(self.repos):
             out["capped"].append("github PRs hit the per-repo cap")
 
@@ -152,7 +152,7 @@ class GatewaySource:
                         if full.get(k) not in (None, "", []) and not p.get(k):
                             p[k] = full[k]
         except Exception as e:  # noqa: BLE001 - merge state is then inferred from commits
-            out["failed"].append({"source": f"github-pr-list:{repo}", "error": str(e)[:200]})
+            out["failed"].append({"source": f"github-pr-list:{repo}", "error": err_text(e, 200)})
 
         async def files(p: dict, allowed: bool) -> None:
             if not allowed:
@@ -167,7 +167,7 @@ class GatewaySource:
             try:
                 out["github"]["reviews"][key] = _rows(await one("github.list_pr_reviews", {"owner": owner, "repo": name, "pull_number": p.get("number")}))
             except Exception as e:  # noqa: BLE001
-                out["failed"].append({"source": f"github-reviews:{key}", "error": str(e)[:200]})
+                out["failed"].append({"source": f"github-reviews:{key}", "error": err_text(e, 200)})
 
         jobs = []
         for n, p in enumerate(prs):
@@ -190,7 +190,7 @@ class GatewaySource:
             log.add("github.list_commits", repo=repo)
             rows = _rows(await self.call("github.list_commits", {"owner": owner, "repo": name, "author": self.username, "since": since, "per_page": 100}), "commits")
         except Exception as e:  # noqa: BLE001 - named in the result
-            out["failed"].append({"source": f"github-commits:{repo}", "error": str(e)[:200]})
+            out["failed"].append({"source": f"github-commits:{repo}", "error": err_text(e, 200)})
             return
         if len(rows) >= MAX_COMMITS_PER_REPO:
             out["capped"].append(f"commits for {repo}: first {MAX_COMMITS_PER_REPO} only")
@@ -270,4 +270,4 @@ class GatewaySource:
                 for ts, ms in groups.items():
                     out["slack"]["threads"].append({"channel": ch.get("name", ""), "channel_id": ch["id"], "messages": ms})
         except Exception as e:  # noqa: BLE001
-            out["failed"].append({"source": "slack", "error": str(e)[:200]})
+            out["failed"].append({"source": "slack", "error": err_text(e, 200)})
