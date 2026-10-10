@@ -86,11 +86,28 @@ def _login(u: Any) -> str:
 
 
 # ---------------------------------------------------------------- GitHub
+_LOCK_WORDS = re.compile(r"lock[\s-]?files?\b|package-lock|yarn\.lock|poetry\.lock|pnpm-lock|go\.sum|uv\.lock|cargo\.lock|gemfile\.lock", re.I)
+
+
+def _fname(f: dict[str, Any]) -> str:
+    return str(f.get("filename") or f.get("path") or f.get("name") or f.get("file") or "")
+
+
+def _generated_only(raw: dict[str, Any], size: dict[str, int], title: str, body: str) -> bool:
+    """True when the PR changes only lockfiles/generated files. Uses the file list; when the list is missing or empty
+    (lookup failed or capped) falls back to the title and body saying lockfile."""
+    files = [f for f in (raw.get("files") or []) if isinstance(f, dict)]
+    names = [_fname(f) for f in files if _fname(f)]
+    if names:
+        return all(is_excluded_file(n) for n in names)
+    return bool(_LOCK_WORDS.search(title or "") or (_LOCK_WORDS.search((body or "")[:500]) and re.search(r"\bonly\b", (title or "") + " " + (body or "")[:500], re.I)))
+
+
 def pr_size(files: list[dict[str, Any]] | None, additions: int, deletions: int) -> dict[str, int]:
     """Changed lines excluding lockfile/generated/vendored files. With no file list we
     can only trust the PR totals, and say so (`size_basis`)."""
     if files:
-        kept = [f for f in files if not is_excluded_file(str(f.get("filename", "")))]
+        kept = [f for f in files if not is_excluded_file(_fname(f))]
         a = sum(int(f.get("additions", 0) or 0) for f in kept)
         d = sum(int(f.get("deletions", 0) or 0) for f in kept)
         total = sum(int(f.get("additions", 0) or 0) + int(f.get("deletions", 0) or 0) for f in files)
@@ -151,8 +168,8 @@ def normalize_pr(raw: dict[str, Any], repo: str, username: str, projects: Iterab
             "merged_flag": bool(merged), "state": raw.get("state", ""), "size": size, "branch": head,
             "cycle_hours": round((cd - cr).total_seconds() / 3600, 1) if cd and cr and merged else None,
             "is_revert": rev is not None, "reverts": rev, "labels": labels,
-            "generated_only": bool(raw.get("files")) and size["files"] == 0 and size["excluded"] > 0,  # lockfile / generated / vendored files only
-            "paths": [f.get("filename", "") for f in (raw.get("files") or []) if isinstance(f, dict) and f.get("filename")][:15],
+            "generated_only": _generated_only(raw, size, title, body),  # lockfile / generated / vendored files only
+            "paths": [_fname(f) for f in (raw.get("files") or []) if isinstance(f, dict) and _fname(f)][:15],
             "merged_basis": raw.get("_merged_basis", "merged_at" if merged else ""),
             "mine": author.lower() == username.lower() or username.lower() in [c.lower() for c in co],
         },
@@ -287,6 +304,25 @@ def normalize_ticket(raw: dict[str, Any], site: str, username_hints: Iterable[st
 
 
 # ----------------------------------------------------------------- Slack
+_DANGLING = {"the", "a", "an", "in", "on", "of", "to", "for", "and", "or", "with", "at", "by", "is", "are", "was", "that", "this", "my", "our", "from", "as", "it", "we", "i", "so", "but"}
+
+
+def thread_title(text: str, n: int = 90) -> str:
+    """A complete first sentence or clause; when too long it is cut at a word with an ellipsis, never ending on a dangling word or ticket key."""
+    line = next((l.strip() for l in str(text).splitlines() if l.strip()), "")
+    line = re.sub(r"\s+", " ", line)
+    m = re.match(r"(.+?[.!?])(?:\s|$)", line)
+    if m and not re.fullmatch(r"[A-Z][A-Z0-9]+-\d+\.", m.group(1)) and len(m.group(1)) >= 12:
+        line = m.group(1)
+    line = line.rstrip(" ,;:-")
+    if len(line) <= n:
+        return line
+    words = line[:n].rsplit(" ", 1)[0].split()
+    while words and (words[-1].lower().strip(",;:") in _DANGLING or re.fullmatch(r"[A-Z][A-Z0-9]+-\d+", words[-1].strip(",;:."))):
+        words.pop()
+    return " ".join(words).rstrip(" ,;:-.") + "..."
+
+
 def normalize_thread(channel: str, channel_id: str, messages: list[dict[str, Any]], user_ids: set[str],
                      permalink_base: str = "") -> Item | Skipped:
     """A Slack thread (or lone message) becomes one item; bots and join/leave noise are dropped."""
@@ -302,7 +338,7 @@ def normalize_thread(channel: str, channel_id: str, messages: list[dict[str, Any
     if not mine:
         return Skipped(iid, "user did not take part")
     first_mine = re.sub(r"\s+", " ", str(mine[0].get("text", ""))).strip()
-    title = " ".join(first_mine.split()[:8]).rstrip(" ,;:-.") or f"#{channel.lstrip('#')} thread"
+    title = thread_title(str(mine[0].get("text", ""))) or f"#{channel.lstrip('#')} thread"
     text = "\n".join(f"{m.get('user_name') or m.get('user')}: {m.get('text','')}" for m in msgs)[:4000]
     # a real permalink when Slack gave one; else built from the workspace address; else Slack's own redirect, which opens the message
     url = root.get("permalink") or (f"{permalink_base}/archives/{channel_id}/p{ts.replace('.', '')}" if permalink_base
