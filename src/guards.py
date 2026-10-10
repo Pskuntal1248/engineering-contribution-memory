@@ -113,6 +113,9 @@ class Statement:
     evidence: list[str]
     role: str = ""
 
+    def __post_init__(self) -> None:
+        self.text = first_person(self.text)
+
 
 def keep_cited(statements: list[Statement], known_ids: set[str]) -> tuple[list[Statement], int]:
     """Every statement links to at least one real item. Unknown ids are removed; no ids left, statement dropped."""
@@ -235,3 +238,28 @@ def internal_terms(items: Iterable[Item], extra: Iterable[str], org: str, site: 
         for mm in re.finditer(r"\b([A-Z][\w&-]+(?:\s[A-Z][\w&-]+)?)\s+\((?:customer|client|merchant)\)", it.text or ""):
             terms.add(mm.group(1))
     return {t for t in terms if t}
+
+
+def clip(text: str, n: int = 220) -> str:
+    """Shorten at a sentence end if one fits, else at a word, with an ellipsis. Never cuts mid-word."""
+    t = re.sub(r"\s+", " ", text or "").strip()
+    if len(t) <= n:
+        return t
+    head = t[:n]
+    k = max(head.rfind(". "), head.rfind("! "), head.rfind("? "))
+    if k >= n * 0.2:
+        return head[: k + 1]
+    cut = head.rsplit(" ", 1)[0] if t[n] != " " else head
+    return cut.rstrip(" ,;:-(") + "..."
+
+
+_FP = [(r"\bthe user's\b", "my"), (r"\bthe user is\b", "I am"), (r"\bthe user has\b", "I have"), (r"\bthe user was\b", "I was"),
+       (r"\bthe user\b", "I"), (r"\bUser's\b", "My"), (r"\bthe engineer\b", "I")]
+
+
+def first_person(text: str) -> str:
+    """Model text sometimes says 'the user ...'; statements are written as 'I ...' like the 1:1."""
+    out = text or ""
+    for rx, rep in _FP:
+        out = re.sub(rx, rep, out, flags=re.I if rx.startswith(r"\bthe") else 0)
+    return re.sub(r"(^|[.!?] )i ", lambda m: m.group(1) + "I ", out)
