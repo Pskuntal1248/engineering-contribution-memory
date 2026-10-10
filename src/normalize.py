@@ -329,7 +329,7 @@ def normalize_doc(raw: dict[str, Any], source: str, username_hints: Iterable[str
     hint_names = {h.lower() for h in username_hints if h}
     if not title.strip() or title.strip().lower().startswith("untitled"):
         return Skipped(f"doc:{source}:{did}", "page has no title")
-    if not body.strip() and title.strip().lower() in hint_names:
+    if title.strip().lower() in hint_names:
         return Skipped(f"doc:{source}:{did}", "profile page, not work")
     conf = bool(raw.get("confidential")) or bool(CONF_WORDS.search(title + " " + " ".join(labels) + " " + body[:600]))
     hints = {h.lower() for h in username_hints if h}
