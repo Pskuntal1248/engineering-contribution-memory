@@ -14,11 +14,18 @@ from weekly import id_key
 TEXT_KEEP = 160
 
 
+import re as _re
+
+
+def outputs_id(n: str) -> bool:
+    return bool(_re.fullmatch(r"[UW](?=[A-Z0-9]*\d)[A-Z0-9]{8,11}", n or ""))
+
+
 def compact(it: Item, project: str) -> dict[str, Any]:
     m = it.meta
-    keep = {k: m[k] for k in ("mine", "confidential", "repo", "number", "merged_flag", "reverted", "is_revert", "received", "reopen_count", "status", "channel", "my_messages", "cycle_hours", "participants", "paths") if k in m}
+    keep = {k: m[k] for k in ("mine", "confidential", "repo", "number", "merged_flag", "reverted", "is_revert", "received", "reopen_count", "status", "channel", "merged_ids", "state", "my_messages", "cycle_hours", "participants", "paths") if k in m}
     keep["size"] = (m.get("size") or {}).get("lines") if m.get("size") else None
-    return {"id": it.id, "s": it.source, "t": it.type, "date": it.date, "title": it.title[:90], "url": it.url, "text": it.text[:TEXT_KEEP],
+    return {"id": it.id, "s": it.source, "t": it.type, "date": it.date, "title": it.title[:160], "url": it.url, "text": it.text[:TEXT_KEEP],
             "author": it.author, "co": it.co_authors[:4], "keys": it.keys[:5], "p": project, "m": keep}
 
 
@@ -70,7 +77,7 @@ async def build(items: list[Item], *, username: str, names: set[str], llm, budge
     notes += n2
     for card in cards:
         prs = [by_id[e] for e in card["evidence"] if by_id[e].type == "pr"]
-        card["co_contributors"] = [n for n in {p for e in card["evidence"] for p in ([by_id[e].author] + by_id[e].co_authors)} if n and n.lower() != username.lower() and n not in names][:6]
+        card["co_contributors"] = [n for n in {p for e in card["evidence"] for p in ([by_id[e].author] + by_id[e].co_authors)} if n and n.lower() != username.lower() and n not in names and not outputs_id(n)][:6]
         if team_changes:  # team change mid-period: the project's items grouped by the team in force, with the change date
             split = linking.split_by_team([by_id[x] for x in clusters[card["project_id"]]["item_ids"]], team_changes)
             since = {t: d for d, t in team_changes}
