@@ -307,13 +307,13 @@ def normalize_ticket(raw: dict[str, Any], site: str, username_hints: Iterable[st
 _DANGLING = {"the", "a", "an", "in", "on", "of", "to", "for", "and", "or", "with", "at", "by", "is", "are", "was", "that", "this", "my", "our", "from", "as", "it", "we", "i", "so", "but"}
 
 
-def thread_title(text: str, n: int = 90) -> str:
+def thread_title(text: str, n: int = 110) -> str:
     """A complete first sentence or clause; when too long it is cut at a word with an ellipsis, never ending on a dangling word or ticket key."""
     line = next((l.strip() for l in str(text).splitlines() if l.strip()), "")
     line = re.sub(r"\s+", " ", line)
     m = re.match(r"(.+?[.!?])(?:\s|$)", line)
-    if m and not re.fullmatch(r"[A-Z][A-Z0-9]+-\d+\.", m.group(1)) and len(m.group(1)) >= 12:
-        line = m.group(1)
+    if len(line) > n and m and not re.fullmatch(r"[A-Z][A-Z0-9]+-\d+\.", m.group(1)) and len(m.group(1)) >= 12:
+        line = m.group(1)  # too long as a whole: the first sentence, when it is complete and fits
     line = line.rstrip(" ,;:-")
     if len(line) <= n:
         return line
