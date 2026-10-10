@@ -67,7 +67,7 @@ class Gateway:
         if name == "drive.find_file":
             return {"files": [{"id": "d1", "name": "Spec", "modifiedTime": "2026-09-03T00:00:00Z", "owners": [{"displayName": "Parth Singh"}], "webViewLink": "https://docs.google.com/d1"}]}
         if name == "drive.export_google_workspace_file":
-            return "spec body"
+            return "spec body with the details of the retry design"
         if name == "slack.list_channels":
             return {"channels": [{"id": "C1", "name": "payments-eng"}, {"id": "C2", "name": "random"}, {"id": "D1", "name": "dm-x", "is_im": True}]}
         if name == "slack.search_messages":
