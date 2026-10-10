@@ -146,7 +146,7 @@ def make_graph(deps: Deps):
         prof = await eprofile.build(items, username=cfg.username, names=names, llm=deps.llm, budget=budget,
                                     framework=str(inp.get("review_framework", "") or ""), role_and_level=str(inp.get("role_and_level", "")),
                                     prior=prior, repo_aliases=cfg.repo_aliases, embedder=deps.embedder,
-                                    team_changes=parse_team_changes(str(inp.get("team_changes", "") or "")))
+                                    team_changes=parse_team_changes(str(inp.get("team_changes", "") or "")), reuse_names=mode != "backfill")
         notes += prof["notes"]
         ctx["prof"], ctx["notes"], ctx["budget"] = prof, notes, budget
         return {"ctx": ctx}
@@ -198,7 +198,7 @@ def make_graph(deps: Deps):
             "items": [eprofile.compact(i, po.get(i.id, "")) for i in sorted(items, key=lambda x: (x.date, x.id))],
             "seen": sorted(set(prior.get("seen", [])) | {id_key(i.id) for i in items} | {id_key(m) for i in items for m in i.meta.get("merged_ids", [])}),
             "cursors": next_cursors(prior.get("cursors", {}), [i for i in items if i.source]),
-            "verdicts": prof["verdicts"], "last_run": deps.now().strftime("%Y-%m-%d"),
+            "verdicts": prof["verdicts"], "cards": prof["card_store"], "last_run": deps.now().strftime("%Y-%m-%d"),
             "backfill_done": bool(prior.get("backfill_done")) or ctx["mode"] == "backfill",
             "gaps": [{"id": g["id"], "status": g["status"]} for g in prof["gaps"]],
         }
