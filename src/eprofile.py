@@ -34,7 +34,7 @@ MIN_PROJECT_ITEMS = 2  # a project needs at least 2 linked items
 
 
 async def build(items: list[Item], *, username: str, names: set[str], llm, budget: Budget, framework: str, role_and_level: str,
-                prior: dict[str, Any] | None, repo_aliases: dict[str, str] | None = None, embedder=None) -> dict[str, Any]:
+                prior: dict[str, Any] | None, repo_aliases: dict[str, str] | None = None, embedder=None, team_changes: list[tuple[str, str]] | None = None) -> dict[str, Any]:
     by_id = {i.id: i for i in items}
     dense, enotes = ({}, [])
     if embedder is not None and items:
@@ -71,6 +71,10 @@ async def build(items: list[Item], *, username: str, names: set[str], llm, budge
     for card in cards:
         prs = [by_id[e] for e in card["evidence"] if by_id[e].type == "pr"]
         card["co_contributors"] = [n for n in {p for e in card["evidence"] for p in ([by_id[e].author] + by_id[e].co_authors)} if n and n.lower() != username.lower() and n not in names][:6]
+        if team_changes:  # team change mid-period: the project's items grouped by the team in force, with the change date
+            split = linking.split_by_team([by_id[x] for x in clusters[card["project_id"]]["item_ids"]], team_changes)
+            since = {t: d for d, t in team_changes}
+            card["teams"] = [{"team": t or "before the first change", "since": since.get(t, ""), "items": len(ids_)} for t, ids_ in sorted(split.items(), key=lambda kv: since.get(kv[0], ""))]
         card["counts"] = {t: sum(1 for e in clusters[card["project_id"]]["item_ids"] if by_id[e].type == t) for t in ("pr", "review", "ticket", "thread", "doc")}
     stats = metrics.pr_stats(items)
     improv = metrics.improvement_areas(items)
