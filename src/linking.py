@@ -11,6 +11,7 @@ from datetime import timedelta
 from models import Item
 from normalize import parse_ts
 
+GENERIC = set("add fix fixes fixed initial commit merge bump chore refactor feat docs test tests new set setup minor wip misc small typo".split())
 STOP = set("update status done thanks work ok see follow ticket part change the a an and or of to in on for with is it this that we i you be at as by from are was were will can not but have has had do did so if then also just now get got use used using into out up".split())
 
 
@@ -33,12 +34,19 @@ class UnionFind:
             self.p[hi] = lo
 
 
+def _stem(t: str) -> str:
+    for suf in ("ies", "ing", "ed", "es", "s"):
+        if t.endswith(suf) and len(t) - len(suf) >= 4:
+            return t[: -len(suf)] + ("y" if suf == "ies" else "")
+    return t
+
+
 def tokens(text: str) -> list[str]:
-    return [t for t in re.findall(r"[a-z][a-z0-9_]{2,}", (text or "").lower()) if t not in STOP]
+    return [_stem(t) for t in re.findall(r"[a-z][a-z0-9_]{2,}", (text or "").lower()) if t not in STOP and t not in GENERIC]
 
 
 def tfidf_vectors(items: list[Item]) -> dict[str, dict[str, float]]:
-    docs = {it.id: Counter(tokens(it.title + " " + it.text[:1500])) for it in items}
+    docs = {it.id: Counter(tokens(it.title + " " + it.text[:1500] + " " + " ".join(it.meta.get("paths", [])))) for it in items}
     df: Counter[str] = Counter()
     for c in docs.values():
         df.update(c.keys())
@@ -68,7 +76,7 @@ def key_aliases(items: list[Item]) -> dict[str, str]:
 
 
 def link(items: list[Item], repo_aliases: dict[str, str] | None = None, topic_threshold: float = 0.28,
-         window_days: int = 10, project_threshold: float = 0.30) -> dict[str, dict]:
+         window_days: int = 10, project_threshold: float = 0.22) -> dict[str, dict]:
     """Return {project_id: {"item_ids": [...], "links": {item_id: [reason,...]}}}.
     Project ids are the root item id, so they are stable between runs."""
     repo_aliases = repo_aliases or {}
