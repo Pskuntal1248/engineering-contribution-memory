@@ -51,7 +51,7 @@ def parse_framework(text: str, current_level: str, next_level: str | None = None
 
 _TOPICS = [  # (expectation regex, predicate over an item). Deterministic baseline; the model mapping replaces it when used.
     (r"review", lambda i: i.type == "review" and i.meta.get("mine") and len(i.text) > 12),
-    (r"mentor|unblock|coach|onboard", lambda i: i.type == "thread" and i.meta.get("label") == "mentoring"),
+    (r"mentor|unblock|coach|onboard", lambda i: i.type == "thread" and i.meta.get("label") in {"mentoring", "help_given"}),
     (r"design|document|adr|rfc", lambda i: i.type == "doc" and i.meta.get("mine") and bool(re.search(r"design|adr|rfc|proposal|architecture", i.title, re.I))),
     (r"cross.?team|stakeholder.*decision|leads? a .*decision", lambda i: i.type in {"doc", "thread"} and bool(re.search(r"cross.?team|multiple teams|org.?wide|across teams", i.text, re.I)) and i.meta.get("mine")),
     (r"incident|debug|reliab|on.?call", lambda i: i.type == "thread" and i.meta.get("label") == "problem_solved"),
