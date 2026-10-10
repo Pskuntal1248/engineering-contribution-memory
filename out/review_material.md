@@ -6,9 +6,9 @@
 
 **Product search query parsing and ranking**
 
-- Situation: I improved product search by adding support for quoted phrases and exclusions and ranking title matches above body matches.
+- Situation: I built search query parsing for quoted phrases and exclusions, and worked on ranking title matches above body matches.
 - Action: I built it and authored 3 PRs.
-- Result: I added query parsing; the ranking change was reverted because its weights were wrong for short queries.
+- Result: I added query parsing, but the ranking change was reverted because its weights were wrong for short queries.
 
 Evidence:
 - SRCH-1 Add query parser: [PR #3](https://github.com/Pskuntal1248/uc10-synthetic-test-data/pull/3), [ticket](https://pskuntal2005.atlassian.net/browse/SRCH-1)
@@ -16,9 +16,9 @@ Evidence:
 
 **[CONFIDENTIAL source - check before sharing] Payout reliability**
 
-- Situation: I improved payout reliability by preventing duplicate payouts, retrying failed bank calls, and reconciling settlement totals.
+- Situation: I built payout safeguards and recovery processes to prevent duplicate payouts, retry failed bank calls, and identify settlement mismatches.
 - Action: I built it and authored 4 PRs.
-- Result: I added idempotency keys, exponential-backoff retries, and a nightly reconciliation job that lists mismatching references.
+- Result: I added idempotency keys, five-attempt exponential-backoff retries, and a nightly reconciliation job that lists mismatching references.
 
 Evidence:
 - PAY-1 Add idempotency key to payouts: [PR #1](https://github.com/Pskuntal1248/uc10-synthetic-test-data/pull/1), [ticket](https://pskuntal2005.atlassian.net/browse/PAY-1)
@@ -30,9 +30,9 @@ Evidence:
 
 **Session token refresh and login rate limiting**
 
-- Situation: I improved authentication by refreshing sessions near expiration and limiting password guesses per user.
+- Situation: I built session token refresh to address mid-checkout expiration and a per-user login limiter to slow password guessing.
 - Action: I built it and authored 3 PRs.
-- Result: I added session token refresh when under five minutes remained. The rate limiter was reverted because it locked out shared office IPs.
+- Result: I added session token refresh when under five minutes remained; the rate limiter was reverted after it locked out shared office IPs.
 
 Evidence:
 - AUTH-1 Add session token refresh: [PR #6](https://github.com/Pskuntal1248/uc10-synthetic-test-data/pull/6), [ticket](https://pskuntal2005.atlassian.net/browse/AUTH-1)
@@ -40,37 +40,37 @@ Evidence:
 
 **payouts for the 18 Sep batch don't match settlement totals, anyone...**
 
-I debugged and fixed a problem with no ticket raised: I traced the payout mismatch to a UTC-versus-IST day-window issue, fixed the window builder, and reran the batch so totals matched.
+I debugged and fixed a problem with no ticket raised: I traced the payout mismatch to the UTC day window conflicting with IST settlement, fixed the window to use the merchant timezone, and reran the batch with matching totals.
 
 [Source: Slack conversation](https://the-glider.slack.com/archives/C0C7U7L87MM/p1791641890360289)
 
-**I keep getting a null pointer in the retry worker, not sure how to...**
+**I keep getting a null pointer in the retry worker, not sure...**
 
-I mentored a teammate with no ticket raised: I guided debugging by logging the job payload and tracing how the retry path rebuilt it, which revealed a missing merchant_id.
+I mentored a teammate with no ticket raised: I guided retry-worker debugging by suggesting payload logging and tracing how the retry path rebuilds the job.
 
 [Source: Slack conversation](https://the-glider.slack.com/archives/C0C7U7L87MM/p1791641945332839)
 
 **how do we run the payouts service locally with the sandbox gateway?**
 
-I helped a teammate with no ticket raised: I explained how to run the payouts service locally with the sandbox gateway and said I would add the instructions to the README.
+I helped a teammate with no ticket raised: I explained how to run the payouts service locally with the sandbox gateway and offered to document the setup in the README.
 
 [Source: Slack conversation](https://the-glider.slack.com/archives/C0C7U7L87MM/p1791641991634509)
 
 **Design: Search ranking approach**
 
-Decision (led): Design: Search ranking approach. We will use BM25 with field-weighted scoring (title x3, body x1) plus a recency boost, implemented under SRCH-2.
+Decision (led): We will use BM25 with field-weighted scoring (title x3, body x1) plus a recency boost, implemented under SRCH-2.
 
 [Source: doc](https://pskuntal2005.atlassian.net/wiki/spaces/UTD/pages/229377/Design+Search+ranking+approach+UC10+TEST+DATA)
 
 **Design: Payout reconciliation job**
 
-Decision (led): Design: Payout reconciliation job. Reconciliation will run nightly as a queue-backed job.
+Decision (led): Reconciliation will run nightly as a queue-backed job.
 
 [Source: doc](https://app.notion.com/p/Design-Payout-reconciliation-job-UC10-TEST-DATA-3f5d2067fa9c80e1ba57f18448a1a6a5)
 
 **docs: ADR-001 move webhooks to a queue**
 
-Decision (led): docs: ADR-001 move webhooks to a queue. Proposes: move outbound webhooks to the platform team shared queue.
+Decision (led): Proposes: move outbound webhooks to the platform team shared queue.
 
 [Source: PR](https://github.com/Pskuntal1248/uc10-synthetic-test-data/pull/9)
 

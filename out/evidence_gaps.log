@@ -1,11 +1,11 @@
 
-  engineering-contribution-memory@0.1.0  run grt_…-oW4 · 26 tools declared
+  engineering-contribution-memory@0.1.0  run grt_…b2S8 · 26 tools declared
 
   ● load                                           0.0s
   ● fetch                                          0.0s
-  ● analyse                                       22.4s
-    ◆ openai/gpt-6-luna                            4.9s
-    ◆ openai/gpt-6-luna                           14.6s
+  ● analyse                                       18.2s
+    ◆ openai/gpt-6-luna                            6.2s
+    ◆ openai/gpt-6-luna                            9.2s
   ● render                                         0.0s
   ● persist                                        0.0s
   ╭─ result ───────────────────────────────────────────────────────────────────────────────╮
@@ -31,7 +31,7 @@
   │ • topic grouping used embeddings (1 calls to the Gravity endpoint) plus keywords       │
   │ ledger_rows           38                                                               │
   │ model_calls           2                                                                │
-  │ seconds               22.5                                                             │
+  │ seconds               18.2                                                             │
   │ new_items             0                                                                │
   │ docs_sources_asked                                                                     │
   │ • confluence                                                                           │
@@ -43,7 +43,7 @@
   │ page_sections                                                                          │
   │ • Evidence gaps                                                                        │
   │ • Appendix: item ledger (also the CSV download)                                        │
-  │ page_chars            2440                                                             │
+  │ page_chars            2416                                                             │
   ╰────────────────────────────────────────────────────────────────────────────────────────╯
 
-  ✓ Done in 27.3s  
+  ✓ Done in 23.3s  

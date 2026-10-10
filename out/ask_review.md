@@ -4,7 +4,7 @@
 
 ## Impact statements 2026-04-01 to 2026-09-30
 
-None found in this period.
+None found in this period. The saved items are dated 2026-10-10 to 2026-10-10, so no project, thread or decision falls inside it.
 
 
 ## What could not be done
