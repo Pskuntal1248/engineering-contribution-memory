@@ -21,6 +21,15 @@ Label = Literal["problem_solved", "decision", "help_given", "mentoring", "none"]
 _CLAIMS = re.compile(r"\b(redone|redo|rework(?:ed)?|rewritten|rolled back|abandoned|cancell?ed|postponed|failed|delayed)\b", re.I)
 
 
+def _supported(text: str, evidence_text: str) -> str:
+    """A model sentence about the project must share at least 2 content words with its linked evidence, else it is dropped."""
+    words = {w for w in re.findall(r"[a-z]{4,}", (text or "").lower()) if w not in _STOP}
+    return text if len(words & set(re.findall(r"[a-z]{4,}", evidence_text))) >= 2 else ""
+
+
+_STOP = {"that", "this", "with", "from", "which", "have", "were", "been", "into", "work", "built", "support", "supported", "team", "project", "shipped"}
+
+
 def _grounded(text: str, evidence_text: str) -> str:
     """Drop a clause that claims redo/rollback/failure/delay when no source text uses that word."""
     parts = re.split(r"(?<=[.;])\s+", text or "")
@@ -247,7 +256,7 @@ SKILL_LEXICON = {
     "async messaging (queues)": r"queue|webhook|consumer|dead letter",
     "frontend & accessibility": r"accessib|contrast|design system|storybook|checkout (page|flow|form)|a11y|css",
     "debugging & incident response": r"incident|pager|root cause|traced|debugg|stack trace|postmortem",
-    "code review": r"review",
+    "code review": r"code review|reviewed (the |his |her |their )?(pr|pull request)|review comments?|lgtm|nit:|requested changes",
     "mentoring": r"mentor|paired|new joiner|onboard",
     "technical design": r"adr|design doc|rfc|decision",
 }
@@ -264,10 +273,18 @@ def map_skills(items: list[Item]) -> list[dict[str, Any]]:
         for i in items:
             if not (i.meta.get("mine") or i.type == "review"):
                 continue
+            if skill == "code review" and i.type not in {"review", "thread"}:
+                continue  # only review comments or a conversation about a review show code review; a doc, ticket or PR does not
             hits = {m.group(0).lower() for m in rx.finditer(i.title + " " + i.text[:600])}
             in_title = bool(rx.search(i.title))
-            # one passing mention in a long body is not evidence of a skill: need the title, or two different terms
-            if in_title or len(hits) >= 2 or (i.type == "thread" and hits):
+            # a passing mention in a body is not evidence: PRs, tickets and commits must name the skill in their title; docs in the title or with two terms; threads on any hit
+            if i.type in {"pr", "ticket", "commit"}:
+                ok_ = in_title
+            elif i.type == "doc":
+                ok_ = in_title or len(hits) >= 2
+            else:
+                ok_ = bool(hits) if i.type in {"thread", "review"} else (in_title or len(hits) >= 2)
+            if ok_:
                 ids.append(i.id)
         if len(ids) >= 2 or (len(ids) == 1 and (re.search(pat, next(i.title for i in items if i.id == ids[0]), re.I) or next(i.type for i in items if i.id == ids[0]) == "thread")):
             by = {i.id: i for i in items}
@@ -352,5 +369,5 @@ async def project_cards_with_model(llm: LLM | None, budget: Budget, base: list[d
                 continue
             ev = [e for e in c.evidence if e in by_id] or out[c.project_id]["evidence"]
             src_text = " ".join(by_id[e].text + " " + by_id[e].title for e in ev).lower()
-            out[c.project_id].update(name=clip(c.name, 80), goal=_grounded(first_person(clip(c.goal, 240)), src_text), outcome=_grounded(first_person(clip(c.outcome, 240)), src_text), role=cap_role(c.role, [by_id[e] for e in ev], username))
+            out[c.project_id].update(name=clip(c.name, 80), goal=_supported(_grounded(first_person(clip(c.goal, 240)), src_text), src_text) or out[c.project_id]["goal"], outcome=_supported(_grounded(first_person(clip(c.outcome, 240)), src_text), src_text) or out[c.project_id]["outcome"], role=cap_role(c.role, [by_id[e] for e in ev], username))
     return list(out.values()), notes
