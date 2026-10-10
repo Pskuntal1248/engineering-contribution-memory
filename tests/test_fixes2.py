@@ -390,3 +390,18 @@ def test_an_item_a_backfill_put_in_a_project_stays_there_when_re_linking_drops_i
     assert second["project_of"].get("slack:odd") == pay
     third = asyncio.run(build(items + [odd], username=ME, names=NAMES, llm=None, budget=budget_for("backfill"), framework="", role_and_level="", prior=None))
     assert "slack:odd" not in third["project_of"]  # a backfill links from scratch
+
+
+def test_platform_store_keeps_cards_and_decision_wording_between_runs():
+    # the real flow keeps the history in the platform store: saved project cards and decision wording must come back on the next run
+    import asyncio
+    from langgraph.store.memory import InMemoryStore
+    from store import PlatformStore
+    st = InMemoryStore()
+    prof = {"items": [{"id": "a"}], "seen": ["a"], "cursors": {}, "verdicts": {}, "last_run": "2026-10-10", "backfill_done": True, "gaps": [],
+            "cards": [{"ev": ["x", "y"], "name": "Payout reliability improvements", "goal": "g", "outcome": "o"}],
+            "dverdicts": {"d1": {"is_decision": True, "decision": "The decision is to run reconciliation nightly."}}}
+    mem = asyncio.run(PlatformStore(st, {}).adump(prof))
+    back = asyncio.run(PlatformStore(st, mem).aload())
+    assert back["cards"] == prof["cards"]
+    assert back["dverdicts"] == prof["dverdicts"]
