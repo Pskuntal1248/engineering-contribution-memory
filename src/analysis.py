@@ -188,6 +188,27 @@ async def classify_decisions_with_model(llm: LLM | None, budget: Budget, cands: 
     return out, notes
 
 
+_HEADS = r"Context|Background|Summary|Overview|Problem|Goals?|Decision|Outcome|Resolution|Proposal|Status|Owner|Date|Authors?|Reviewers?|Deciders?|Consequences|Options"
+
+
+def decision_owner(text: str) -> str:
+    m = re.search(r"\bOwner\s*:\s*((?:(?!(?:" + _HEADS + r")\b)[A-Z][\w.'-]*\s*){1,3})", text or "")
+    return m.group(1).strip() if m else ""
+
+
+def decision_sentence(text: str) -> str:
+    """What was decided, as one full sentence: the text under a Decision/Outcome/Proposal heading, else the first sentence after the page header lines (Owner, Status, Context heading)."""
+    t = re.sub(r"\s+", " ", text or "").strip()
+    m = re.search(r"\b(?:Decision|Outcome|Resolution|Proposal)\s*:?\s+([A-Z].+)", t)
+    if m:
+        t = m.group(1)
+    else:
+        t = re.sub(r"\b(?:Owner|Status|Date|Authors?|Reviewers?|Deciders?)\s*:\s*(?:(?!(?:" + _HEADS + r")\b)[A-Za-z0-9][\w.'-]*\s*){0,4}", "", t)
+        t = re.sub(r"^\s*(?:(?:" + _HEADS + r")\b\s*:?\s*)+", "", t).strip()
+    s = re.match(r"(.+?[.!?])(?:\s|$)", t)
+    return clip((s.group(1) if s else t).strip(), 220)
+
+
 def find_decisions(items: list[Item], display_names: set[str], username: str,
                    verdicts: dict[str, DecisionVerdict] | None = None) -> list[dict[str, Any]]:
     """Design docs / ADRs, as docs or as PRs. Role: author = led; editor or reviewer only = contributed.
@@ -202,8 +223,9 @@ def find_decisions(items: list[Item], display_names: set[str], username: str,
             ok = v.is_decision if v is not None else (it.type == "pr" or bool(_DECISION.search(it.text)) or bool(it.meta.get("decision_text")))
             if not ok:
                 continue
-        author_is_me = it.author in display_names or it.author.lower() == username.lower()
-        summary = first_person(clip(v.summary, 220)) if v is not None and v.is_decision and v.summary else clip(it.text or it.title, 220)
+        owner = str(it.meta.get("owner") or decision_owner(it.text))
+        author_is_me = it.author in display_names or it.author.lower() == username.lower() or bool(owner and (owner in display_names or owner.lower() == username.lower() or owner.lower() in {n.lower() for n in display_names}))
+        summary = first_person(clip(v.summary, 220)) if v is not None and v.is_decision and v.summary else (str(it.meta.get("dsum") or "") or decision_sentence(it.text) or clip(it.title, 220))
         out.append({"doc": it.id, "title": it.title, "role": "led" if author_is_me else "contributed", "evidence": [it.id],
                     "summary": summary, "confidential": bool(it.meta.get("confidential")),
                     "co_contributors": [] if author_is_me else [it.author]})
