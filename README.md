@@ -13,3 +13,6 @@ Reads your last 6 months of work, links PRs, tickets, discussions and docs into 
 Run tests: `uv venv --python 3.12 && uv pip install -r requirements.txt pytest && pytest`
 
 Status: work in progress, private, not submitted to Gravity.
+
+## On-demand requests (checked against the Gravity 0.5.0 guide)
+This agent is `kind: monitor`. The guide offers follow-up runs with the user's words (`inputs["message"]`) only for `kind: interactive`, so a monitor does not get them. On-demand answers (what did I do on project X, year summary, review-pack, promotion evidence) are chosen with the `request` dropdown plus `period_from` / `period_to` on a manual run. They are answered from the saved profile with no source reads. Free-text follow-ups are not supported; this is a deliberate choice, not an oversight.
