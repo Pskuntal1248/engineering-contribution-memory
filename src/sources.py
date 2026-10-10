@@ -73,7 +73,8 @@ class GatewaySource:
     against a connected account (see report). Every failure is captured per source."""
 
     def __init__(self, call: Call, username: str, repos: list[str], slack_channels: list[str], include_dms: bool,
-                 jira_projects: list[str], has: set[str]):
+                 jira_projects: list[str], has: set[str], docs_sources: list[str] | None = None):
+        self.docs_sources = [d.lower() for d in (docs_sources or [])]
         self.call, self.username, self.repos = call, username, repos
         self.slack_channels, self.include_dms, self.jira_projects, self.has = slack_channels, include_dms, jira_projects, has
 
@@ -82,16 +83,22 @@ class GatewaySource:
         await self._github(out, since, log)
         if self.slack_channels or self.include_dms:  # no Slack call at all unless the user named channels
             await self._slack(out, since, log)
-        if "jira.search" in self.has:
-            try:
-                log.add("jira.search", projects=self.jira_projects)
-                data = await self.call("jira.search", {"jql": f"project in ({','.join(self.jira_projects)}) AND updated >= \"{since[:10]}\" AND (assignee = currentUser() OR reporter = currentUser() OR commentedBy = currentUser())"})
-                out["jira"] = _rows(data, "issues")
-            except Exception as e:  # noqa: BLE001 - named in the result
-                out["failed"].append({"source": "jira", "error": str(e)[:200]})
+        import adapters
+        if "jira.search_issues" in self.has:
+            await adapters.fetch_jira(self.call, self.jira_projects, since, log, out)
         else:
-            out["failed"].append({"source": "jira", "error": "no Jira tool in the Gravity catalog (requested from Gravity)"})
-        out["failed"].append({"source": "docs", "error": "no docs tool available (Confluence/Notion are not in the Gravity catalog yet)"})
+            out["failed"].append({"source": "jira", "error": "jira.search_issues is not available in this run"})
+        wanted = {"confluence": ("confluence.cql_search", adapters.fetch_confluence), "notion": ("notion.search_notion_page", adapters.fetch_notion),
+                  "google drive": ("drive.find_file", adapters.fetch_drive)}
+        for src_name, (tool, fn) in wanted.items():
+            if not any(src_name in d or (src_name == "google drive" and "drive" in d) for d in self.docs_sources):
+                continue
+            if tool in self.has:
+                await fn(self.call, since, log, out)
+            else:
+                out["failed"].append({"source": f"docs:{src_name}", "error": f"{tool} is not available in this run"})
+        if not self.docs_sources:
+            out["failed"].append({"source": "docs", "error": "no docs source chosen (set docs_source to Confluence, Notion or Google Drive)"})
         return out
 
     async def _github(self, out: dict, since: str, log: ToolLog) -> None:
@@ -199,6 +206,10 @@ class GatewaySource:
             picked, missing = channels_to_read(chans, self.slack_channels, self.include_dms, log)
             for m in missing:
                 out["failed"].append({"source": f"slack:#{m}", "error": "channel not found or not accessible"})
+            if "slack.search_messages" in self.has and "slack.fetch_message_thread_from_a_conversation" in self.has:
+                import adapters
+                await adapters.fetch_slack_search(self.call, [c for c in picked if not is_dm_channel(c)], since, log, out)
+                picked = [c for c in picked if is_dm_channel(c)]  # opted-in DMs still read from history, channel by channel
             for ch in picked:
                 log.add("slack.read_history", channel=ch["id"], is_dm=is_dm_channel(ch))
                 msgs = _rows(await self.call("slack.read_history", {"channel": ch["id"], "oldest": since, "limit": 1000}), "messages")
