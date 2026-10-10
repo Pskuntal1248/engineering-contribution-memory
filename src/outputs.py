@@ -6,6 +6,7 @@ from typing import Any
 
 import ledger
 from guards import FLAG, Statement, drop_colleague_assessments, flag_confidential, internal_terms, keep_cited, predicts_promotion, scrub
+from metrics import shipped
 from models import Item
 
 LEDGER_CAP = 6000
@@ -69,15 +70,42 @@ def one_on_one(profile: dict[str, Any], by_id: dict[str, Item], sts: list[Statem
     decs = [s for s in sts if "Decision (" in s.text][:3]
     imp = [s for s in sts if s.text.startswith("Recurring")][:2]
     gaps = [g for g in profile["gaps"] if g["status"] != "backed" and g["level"] == "next"]
+    mine = [i for i in by_id.values() if i.meta.get("mine")]
+    blockers = [f"Open PR, not merged yet: {i.title[:80]} ({i.url or i.id})" for i in sorted(mine, key=lambda x: x.date)
+                if i.type == "pr" and i.meta.get("state") == "open" and not i.meta.get("is_revert")][:4]
+    blockers += [f"Ticket reopened {i.meta.get('reopen_count')}x: {i.title[:80]} ({i.url or i.id})" for i in sorted(mine, key=lambda x: x.date)
+                 if i.type == "ticket" and i.meta.get("reopen_count", 0) > 0][:3]
     out = [
         {"heading": "Wins", "bullets": [f"{s.text} [{_cite(s.evidence, by_id, 1)}]" for s in wins]},
         {"heading": "You may not have seen", "bullets": [f"{s.text} [{_cite(s.evidence, by_id, 1)}]" for s in unseen]},
+        {"heading": "Blockers", "bullets": blockers},
         {"heading": "Decisions needing input", "bullets": [f"{s.text} [{_cite(s.evidence, by_id, 1)}]" for s in decs]},
         {"heading": "Working on", "bullets": [f"{s.text} [{_cite(s.evidence, by_id, 2)}]" for s in imp]},
     ]
     if gaps:
         out.append({"heading": "For the next level", "bullets": [f"{g['expectation']}: {'no evidence yet' if g['status']=='missing' else str(len(g['evidence']))+' item(s), thin'}" for g in gaps[:4]]})
     return [s for s in out if s["bullets"]]
+
+
+def weekly_sections(profile: dict[str, Any], by_id: dict[str, Item], ids: set[str], quiet_line: str | None) -> list[dict[str, Any]]:
+    """Weekly summary: what shipped, what is in progress, problems solved, help given. Items from the window only; every line links."""
+    if quiet_line or not ids:
+        return [{"heading": "Nothing new this week", "body": quiet_line or "Nothing new this week."}]
+    fresh = sorted((by_id[i] for i in ids if i in by_id and by_id[i].meta.get("mine", True)), key=lambda x: (x.date, x.id))
+
+    def line(i: Item) -> str:
+        return f"{i.title[:90]} ({i.url or i.id})"
+    shipped_ = [i for i in fresh if (i.type == "pr" and shipped(i)) or (i.type == "commit" and not i.meta.get("is_revert") and not i.meta.get("reverted"))]
+    prog = [i for i in fresh if i.type == "pr" and not shipped(i) and not i.meta.get("reverted") and not i.meta.get("is_revert") and i.meta.get("state") != "closed"]
+    def from_window(labels: set[str]) -> list[str]:
+        return [f"{v['summary']} ({_cite(v['evidence'], by_id, 1)})" for v in profile["invisible"] if v["label"] in labels and any(e in ids for e in v["evidence"])]
+    return [
+        {"heading": "What changed this week", "facts": [{"label": "New items", "value": len(fresh), "source": "ledger"}]},
+        {"heading": "Shipped", "bullets": [line(i) for i in shipped_[:25]]},
+        {"heading": "In progress", "bullets": [line(i) for i in prog[:15]]},
+        {"heading": "Problems solved", "bullets": from_window({"problem_solved"})},
+        {"heading": "Help given", "bullets": from_window({"help_given", "mentoring"})},
+    ]
 
 
 def stories(profile: dict[str, Any], by_id: dict[str, Item], terms: set[str], keep_internal: bool) -> list[dict[str, Any]]:
@@ -119,17 +147,13 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
                   "body": f"{len(rows)} items" + (f" (newest {LEDGER_CAP} of {len(items)})" if trunc else "") + ". Reverts and reverted PRs are listed but not counted as shipped.",
                   "table": {"columns": ledger.COLUMNS, "rows": rows}}
     facts = [{"label": "PRs shipped", "value": s["prs_shipped"], "source": "ledger"}, {"label": "PRs reverted (not counted)", "value": s["prs_reverted"], "source": "ledger"},
+             {"label": "Commits authored (outside merged PRs)", "value": s["commits_authored"], "source": "ledger"},
              {"label": "Reviews given", "value": s["reviews_given"], "source": "ledger"}, {"label": "Tickets touched", "value": s["tickets_touched"], "source": "ledger"},
              {"label": "Median PR cycle (hours)", "value": s["median_cycle_hours"] if s["median_cycle_hours"] is not None else "n/a", "source": "ledger"}]
     sections: list[dict[str, Any]] = [ledger_sec]
     sts = build_statements(profile, by_id, kind if kind not in {"backfill", "weekly"} else "profile", names, colleagues, date_from, date_to)
     if kind == "weekly_summary" or kind == "weekly":
-        fresh = [by_id[i] for i in new_ids if i in by_id]
-        if quiet_line:
-            sections.insert(0, {"heading": "Nothing new this week", "body": quiet_line})
-        else:
-            sections.insert(0, {"heading": "What changed this week", "facts": [{"label": "New items", "value": len(fresh), "source": "ledger"}],
-                                "bullets": [f"{i.title[:90]} ({i.url or i.id})" for i in sorted(fresh, key=lambda x: (x.date, x.id))[:25]]})
+        sections[0:0] = weekly_sections(profile, by_id, new_ids, quiet_line)
     if kind in {"backfill", "profile"}:
         sections += [
             {"heading": "Projects", "bullets": [f"{p['name']} ({p['first']} to {p['last']}), role {p['role']}: {p['outcome']}. Evidence: {_cite(p['evidence'], by_id, 3)}" for p in profile["projects"]]},
