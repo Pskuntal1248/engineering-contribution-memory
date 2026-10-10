@@ -58,3 +58,76 @@ def test_markdown_copy_has_text_and_ledger(tmp_path):
     assert "shipped X (PAY-1)" in md and "github" not in md
     outputs.write_local_copy(corpus, str(tmp_path))
     assert "shipped X" in (tmp_path / "last_output.md").read_text() and (tmp_path / "last_ledger.csv").read_text().startswith("source,date")
+
+
+def _thread(i, minute, text, user="Parth"):
+    return Item(id=f"slack:G1:17900000{i}.0001", source="slack", type="thread", date=f"2026-09-18T10:{minute:02d}:00Z", title="#uc10-test thread", text=f"{user}: {text}",
+                author=user, meta={"channel": "uc10-test", "channel_id": "G1", "messages": 1, "my_messages": 1, "participants": [user], "mine": True})
+
+
+def test_consecutive_messages_on_one_incident_merge_but_other_topics_do_not():
+    from pipeline import merge_threads
+    a = _thread(1, 0, "settlement batch window mismatch, looks like UTC vs IST")
+    b = _thread(2, 3, "traced the settlement batch window to a timezone bug, UTC vs IST")
+    c = _thread(3, 6, "fix: batch window now uses IST, settlement matches")
+    d = _thread(4, 30, "new joiner question about the retry backoff config, walked through it")
+    out = merge_threads([a, b, c, d])
+    assert len(out) == 2
+    big = max(out, key=lambda i: i.meta["my_messages"])
+    assert big.meta["my_messages"] == 3 and len(big.meta["merged_ids"]) == 2 and big.id == a.id
+
+
+def test_one_on_one_is_first_person_linked_and_free_of_ids_and_trivial_wins():
+    from outputs import one_on_one, no_ids, short, to_markdown
+    mk = lambda i, t, **m: Item(id=i, source="github", type="pr", date="2026-09-01T00:00:00Z", title=t, url="u-" + i, keys=m.pop("keys", []), meta={"mine": True, "merged_flag": True, **m})
+    init = mk("p0", "Initial commit")
+    real = mk("p1", "PAY-1: idempotency key for payouts", keys=["PAY-1"])
+    th = _thread(1, 0, "traced the batch window to a timezone bug")
+    th.url = "u-th"
+    prof = {"gaps": [], "projects": [], "decisions": [{"doc": "d", "title": "Design: Payout reconciliation job [UC10 TEST DATA] with a very long title that keeps going", "role": "contributed", "evidence": ["p1"], "summary": "decision is not stated"}],
+            "invisible": [{"thread": th.id, "label": "problem_solved", "summary": "traced the batch window to a timezone bug", "evidence": [th.id], "co_contributors": ["U0BUNS1DT5E"]}],
+            "improvements": [{"label": "missing tests", "count": 3, "item_ids": ["p1"]}]}
+    out = one_on_one(prof, {i.id: i for i in (init, real, th)}, [])
+    text = to_markdown({"title": "t", "summary": "", "sections": out})
+    assert "I shipped PAY-1: idempotency key for payouts (PAY-1)" in text and "Initial commit" not in text
+    assert "I debugged and fixed a problem in #uc10-test" in text and "No ticket was raised" in text and "u-th" in text
+    assert "U0BUNS1DT5E" not in text and "not stated" not in text and "the user" not in text.lower()
+    assert "Working on" in text and "missing tests" in text
+    assert no_ids("role contributed with U0BUNS1DT5E.") == "role contributed." and "U0BUNS1DT5E" not in no_ids("thanks U0BUNS1DT5E")
+    s = short("Design: Payout reconciliation job [UC10 TEST DATA]", 30)
+    assert s.count("[") == s.count("]") and not s.endswith("DAT")
+
+
+def test_confluence_not_enabled_fails_gracefully_and_others_continue():
+    import asyncio
+    from adapters import fetch_confluence
+    from guards import ToolLog
+
+    async def raises(name, args):
+        raise RuntimeError("Confluence is not enabled for this site (404)")
+
+    out = {"docs": [], "failed": [], "capped": []}
+    asyncio.run(fetch_confluence(raises, "2026-01-01T00:00:00Z", ToolLog(), out))
+    assert out["docs"] == [] and "not enabled" in out["failed"][0]["error"] and out["failed"][0]["source"] == "docs:confluence"
+
+    async def as_data(name, args):
+        return {"successful": False, "error": "No Confluence app on this Atlassian site"}
+
+    out2 = {"docs": [], "failed": [], "capped": []}
+    asyncio.run(fetch_confluence(as_data, "2026-01-01T00:00:00Z", ToolLog(), out2))
+    assert len(out2["failed"]) == 1 and "docs:confluence" == out2["failed"][0]["source"]
+
+
+def test_docs_confluence_down_notion_and_drive_still_returned():
+    from test_adapters import Gateway, fetch
+
+    class NoConfluence(Gateway):
+        async def __call__(self, name, args):
+            if name.startswith("confluence."):
+                raise RuntimeError("Confluence is not enabled on this site")
+            return await super().__call__(name, args)
+
+    out = fetch(NoConfluence())
+    srcs = {d["_source"] for d in out["docs"]}
+    assert srcs == {"notion", "drive"}
+    assert [f for f in out["failed"] if f["source"] == "docs:confluence" and "not enabled" in f["error"]]
