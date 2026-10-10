@@ -21,19 +21,40 @@ MAX_THREAD_FETCHES = 600
 JIRA_FIELDS = ["summary", "status", "assignee", "reporter", "created", "updated", "resolutiondate", "issuetype", "parent", "labels", "description", "project", "comment"]
 
 
-def rows(data: Any, *keys: str) -> list[dict]:
+def rows(data: Any, *keys: str, _depth: int = 0) -> list[dict]:
+    """The list of records in a gateway payload. Tools wrap their result in different envelopes (data, response_data,
+    results...), so named keys are tried first and then any nested envelope, a few levels deep."""
     if isinstance(data, list):
         return [x for x in data if isinstance(x, dict)]
-    if isinstance(data, dict):
+    if isinstance(data, dict) and _depth < 5:
         for k in (*keys, "items", "data", "results", "values"):
             v = data.get(k)
             if isinstance(v, list):
                 return [x for x in v if isinstance(x, dict)]
             if isinstance(v, dict):
-                got = rows(v, *keys)
+                got = rows(v, *keys, _depth=_depth + 1)
+                if got:
+                    return got
+        for k, v in data.items():  # unknown envelope: look inside it, skipping bookkeeping keys
+            if isinstance(v, dict) and k not in {"properties", "metadata", "fields"}:
+                got = rows(v, *keys, _depth=_depth + 1)
                 if got:
                     return got
     return []
+
+
+def find_key(data: Any, *names: str, _depth: int = 0) -> Any:
+    """First value stored under any of `names`, searching nested envelopes."""
+    if isinstance(data, dict) and _depth < 5:
+        for n in names:
+            if data.get(n) not in (None, ""):
+                return data[n]
+        for v in data.values():
+            if isinstance(v, dict):
+                got = find_key(v, *names, _depth=_depth + 1)
+                if got not in (None, ""):
+                    return got
+    return None
 
 
 def adf_text(node: Any) -> str:
@@ -94,8 +115,8 @@ async def fetch_jira(call: Call, projects: list[str], since: str, log: ToolLog, 
             log.add("jira.search_issues", projects=projects)
             data = await call("jira.search_issues", args)
             found += rows(data, "issues")
-            token = (data.get("next_page_token") or data.get("nextPageToken")) if isinstance(data, dict) else None
-            if not token or len(found) >= MAX_TICKETS or (isinstance(data, dict) and data.get("isLast") is True):
+            token = find_key(data, "next_page_token", "nextPageToken")
+            if not token or len(found) >= MAX_TICKETS or find_key(data, "isLast") is True:
                 break
     except Exception as e:  # noqa: BLE001
         out["failed"].append({"source": "jira", "error": str(e)[:200]})
@@ -187,15 +208,33 @@ async def fetch_confluence(call: Call, since: str, log: ToolLog, out: dict) -> N
 
 
 # ---------------------------------------------------------------- Notion
-async def fetch_notion(call: Call, since: str, log: ToolLog, out: dict) -> None:
-    me = ""
+async def notion_user_id(call: Call, names: list[str], log: ToolLog, out: dict) -> tuple[str, bool]:
+    """The connected user's Notion id. notion.get_about_user needs an id, so list the workspace's people and pick the one
+    whose name or email matches the user's names; if the workspace has exactly one person, that is the user."""
     try:
-        log.add("notion.get_about_user")
-        who = await call("notion.get_about_user", {})
-        me = str((who or {}).get("id") or ((who or {}).get("bot") or {}).get("owner", {}).get("user", {}).get("id") or "") if isinstance(who, dict) else ""
+        log.add("notion.list_users")
+        users = rows(await call("notion.list_users", {"page_size": 100}), "results", "users")
     except Exception as e:  # noqa: BLE001
-        out["failed"].append({"source": "docs:notion", "error": f"could not tell which pages are the user's: {str(e)[:120]}"})
+        out["failed"].append({"source": "docs:notion", "error": f"could not list Notion users to find yours: {str(e)[:120]}"})
+        return "", False
+    people = [u for u in users if str(u.get("type", "person")) == "person" and str(u.get("object", "user")) == "user"]
+    want = [n.lower() for n in names if n]
+    for u in people:
+        label = " ".join([str(u.get("name") or ""), str(((u.get("person") or {}).get("email")) or "")]).lower()
+        if any(w and (w in label or label.split("@")[0].strip() == w) for w in want):
+            return str(u.get("id", "")), len(people) == 1
+    if len(people) == 1:
+        return str(people[0].get("id", "")), True
+    out["failed"].append({"source": "docs:notion", "error": f"could not tell which of {len(people)} Notion users is you: set display_name to your Notion name"})
+    return "", False
+
+
+async def fetch_notion(call: Call, since: str, log: ToolLog, out: dict, names: list[str] | None = None) -> None:
+    me, solo = await notion_user_id(call, names or [], log, out)
+    if not me:
         return
+    if solo:  # one person in the workspace: pages made through an integration on their behalf are theirs too
+        out["capped"].append("notion: single-person workspace, so every recently edited page is attributed to you")
     pages: list[dict] = []
     cursor: str | None = None
     try:
@@ -207,7 +246,7 @@ async def fetch_notion(call: Call, since: str, log: ToolLog, out: dict) -> None:
             data = await call("notion.search_notion_page", args)
             batch = rows(data, "results")
             pages += batch
-            cursor = data.get("next_cursor") if isinstance(data, dict) else None
+            cursor = find_key(data, "next_cursor")
             if not cursor or not batch or str(batch[-1].get("last_edited_time", "9999")) < since:
                 break
     except Exception as e:  # noqa: BLE001
@@ -217,9 +256,7 @@ async def fetch_notion(call: Call, since: str, log: ToolLog, out: dict) -> None:
     def uid(x: Any) -> str:
         return str((x or {}).get("id", "")) if isinstance(x, dict) else ""
 
-    mine = [p for p in pages if str(p.get("last_edited_time", "")) >= since and me and me in (uid(p.get("created_by")), uid(p.get("last_edited_by")))][:MAX_DOCS_PER_SOURCE]
-    if not me:
-        out["failed"].append({"source": "docs:notion", "error": "user id unknown, so no page could be attributed to the user"})
+    mine = [p for p in pages if str(p.get("last_edited_time", "")) >= since and (solo or me in (uid(p.get("created_by")), uid(p.get("last_edited_by"))))][:MAX_DOCS_PER_SOURCE]
     sem = asyncio.Semaphore(PARALLEL)
 
     def title(p: dict) -> str:
@@ -236,7 +273,7 @@ async def fetch_notion(call: Call, since: str, log: ToolLog, out: dict) -> None:
         except Exception as e:  # noqa: BLE001
             out["failed"].append({"source": f"docs:notion:{p.get('id')}", "error": str(e)[:120]})
         out["docs"].append({"_source": "notion", "id": p.get("id"), "title": title(p), "body": body, "labels": [],
-                            "author": "me" if uid(p.get("created_by")) == me else "", "editors": ["me"] if uid(p.get("last_edited_by")) == me else [],
+                            "author": (names or ["me"])[0] if (solo or uid(p.get("created_by")) == me) else "", "editors": [(names or ["me"])[0]] if (solo or uid(p.get("last_edited_by")) == me) else [],
                             "created": p.get("created_time", ""), "modified": p.get("last_edited_time", ""), "url": p.get("url", ""),
                             "_mine": True, "kind": "notion page"})
 
@@ -274,14 +311,10 @@ async def fetch_drive(call: Call, since: str, log: ToolLog, out: dict) -> None:
 
 # ------------------------------------------------------- Slack by search
 def _matches(data: Any) -> list[dict]:
-    if isinstance(data, dict):
-        m = data.get("messages")
-        if isinstance(m, dict):
-            return rows(m, "matches")
-        if isinstance(m, list):
-            return rows(m)
-        return rows(data, "matches")
-    return rows(data, "matches")
+    got = find_key(data, "matches")
+    if isinstance(got, list):
+        return [x for x in got if isinstance(x, dict)]
+    return rows(data, "matches", "messages")
 
 
 async def fetch_slack_search(call: Call, picked: list[dict], since_ts: str, log: ToolLog, out: dict) -> None:
