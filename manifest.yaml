@@ -25,15 +25,15 @@ inputs:
   - name: jira_site
     type: url
     label: "Jira site URL (used when a Jira tool is available)"
-    required: false
+    required: true
   - name: jira_projects
     type: textarea
     label: "Jira project keys, comma separated"
-    required: false
+    required: true
   - name: slack_channels
     type: textarea
     label: "Slack channels to read (public or ones you opt in), comma separated"
-    required: false
+    required: true
   - name: include_dms
     type: static-dropdown
     label: "Include DMs? (default No)"
@@ -49,8 +49,10 @@ inputs:
     label: "Your Slack user ID(s), comma separated"
     required: false
   - name: docs_source
-    type: text
-    label: "Docs source: Confluence, Notion or Google Drive (when available)"
+    type: static-dropdown
+    label: "Docs source (Confluence, Notion or Google Drive; read only when a tool for it exists)"
+    options: ["None", "Confluence", "Notion", "Google Drive"]
+    default: "None"
     required: false
   - name: backfill_months
     type: number
@@ -90,10 +92,11 @@ inputs:
     default: "No"
     required: false
   - name: timezone
-    type: text
+    type: static-dropdown
     label: "Your timezone"
+    options: ["Asia/Kolkata", "UTC", "Europe/London", "Europe/Berlin", "America/New_York", "America/Chicago", "America/Los_Angeles", "Asia/Singapore", "Asia/Tokyo", "Australia/Sydney"]
     default: "Asia/Kolkata"
-    required: false
+    required: true
 
 permissions:
   tools:
@@ -101,6 +104,7 @@ permissions:
     - github.list_pr_files
     - github.list_pr_reviews
     - github.list_commits
+    - github.get_commit
     - slack.list_channels
     - slack.read_history
   models:
