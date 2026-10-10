@@ -208,6 +208,23 @@ def _scope_problem(err: str) -> bool:
     return "scope" in e or "401" in e or "403" in e or "unauthor" in e or "forbidden" in e
 
 
+_PROBES = (("confluence.who_am_i", {}), ("confluence.get_spaces", {"limit": 1}), ("confluence.search_pages", {"limit": 1}), ("confluence.get_pages", {"limit": 1}))
+
+
+async def probe_confluence(call: Call, log: ToolLog) -> str:
+    """When every read path is refused, try one tiny read per other Confluence tool so the message says which ones the connection allows."""
+    res = []
+    for name, args in _PROBES:
+        try:
+            log.add(name)
+            data = await call(name, args)
+            bad = failed_payload(data)
+            res.append(f"{name.split('.')[1]}: " + ("refused" if bad else "ok"))
+        except Exception:  # noqa: BLE001
+            res.append(f"{name.split('.')[1]}: refused")
+    return "Checked what the connection allows: " + ", ".join(res) + "."
+
+
 async def fetch_confluence_v2(call: Call, since: str, log: ToolLog, out: dict, first_error: str) -> None:
     """Fallback when the CQL search (Confluence REST v1) is refused for scope: list recent pages through the v2 pages tool and keep
     the ones the connected user wrote or last edited. If that is refused too, say so plainly; the user needs to reconnect."""
@@ -218,7 +235,7 @@ async def fetch_confluence_v2(call: Call, since: str, log: ToolLog, out: dict, f
         mine_ids = {str(acct)} if acct else set()
         my_name = str(find_key(me, "display_name", "displayName", "public_name", "publicName") or "")
     except Exception as e:  # noqa: BLE001
-        out["failed"].append({"source": "docs:confluence", "error": explain("docs:confluence", first_error)})
+        out["failed"].append({"source": "docs:confluence", "error": explain("docs:confluence", first_error) + " " + await probe_confluence(call, log)})
         return
     if not mine_ids:
         out["failed"].append({"source": "docs:confluence", "error": "Confluence is connected but did not say who you are, so your pages cannot be picked out. Reconnect with gravity connect confluence."})
@@ -227,11 +244,11 @@ async def fetch_confluence_v2(call: Call, since: str, log: ToolLog, out: dict, f
         log.add("confluence.get_pages")
         data = await call("confluence.get_pages", {"sort": "-modified-date", "limit": 100, "status": "current", "body_format": "storage"})
     except Exception as e:  # noqa: BLE001
-        out["failed"].append({"source": "docs:confluence", "error": explain("docs:confluence", str(e))})
+        out["failed"].append({"source": "docs:confluence", "error": explain("docs:confluence", str(e)) + " " + await probe_confluence(call, log)})
         return
     bad = failed_payload(data)
     if bad:
-        out["failed"].append({"source": "docs:confluence", "error": explain("docs:confluence", bad)})
+        out["failed"].append({"source": "docs:confluence", "error": explain("docs:confluence", bad) + " " + await probe_confluence(call, log)})
         return
     sem = asyncio.Semaphore(PARALLEL)
 
