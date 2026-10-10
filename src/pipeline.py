@@ -22,6 +22,7 @@ class Config:
     slack_user_ids: set[str] = field(default_factory=set)
     name_hints: list[str] = field(default_factory=list)  # display names / emails for Jira + docs
     repo_aliases: dict[str, str] = field(default_factory=dict)
+    docs_sources: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -125,7 +126,7 @@ def ingest(raw: dict[str, Any], cfg: Config, log: ToolLog | None = None) -> Inge
             continue
         if log is not None:
             log.add("slack.read_history", channel=th["channel_id"], is_dm=th["channel_id"] in dm_ids)
-        x = N.normalize_thread(names[th["channel_id"]], th["channel_id"], th["messages"], cfg.slack_user_ids)
+        x = N.normalize_thread(names[th["channel_id"]], th["channel_id"], th["messages"], cfg.slack_user_ids | set(raw.get("slack", {}).get("my_user_ids", [])))
         if isinstance(x, Item):
             x.meta["is_dm"] = th["channel_id"] in dm_ids
         take(x)
