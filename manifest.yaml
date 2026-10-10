@@ -113,7 +113,7 @@ permissions:
     - confluence.get_page_by_id
     - notion.search_notion_page
     - notion.get_page_markdown
-    - notion.get_about_user
+    - notion.list_users
     - drive.find_file
     - drive.export_google_workspace_file
     - slack.search_messages
