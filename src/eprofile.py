@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 import analysis
+from guards import TRIVIAL_TITLE
 import linking
 import metrics
 from guards import Budget, Statement, cap_role, confidential_ids, drop_colleague_assessments, keep_cited, predicts_promotion
@@ -70,7 +71,8 @@ async def build(items: list[Item], *, username: str, names: set[str], llm, budge
     # a project needs 2+ linked items and at least one item that is real tracked work (PR, ticket, commit, review or doc).
     # Slack threads that only resemble each other are chatter, not a project.
     def is_project(c: dict) -> bool:
-        return len(c["item_ids"]) >= MIN_PROJECT_ITEMS and any(by_id[i].type != "thread" for i in c["item_ids"])
+        real = [i for i in c["item_ids"] if by_id[i].type != "thread" and not (by_id[i].type in {"commit", "pr"} and TRIVIAL_TITLE.search(by_id[i].title))]
+        return len(c["item_ids"]) >= MIN_PROJECT_ITEMS and bool(real)
 
     base = [analysis.baseline_project_card(pid, c["item_ids"], by_id, username) for pid, c in sorted(clusters.items()) if is_project(c)]
     cards, n2 = await analysis.project_cards_with_model(llm, budget, base, by_id, username)
