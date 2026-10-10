@@ -75,6 +75,30 @@ def adf_text(node: Any) -> str:
     return ""
 
 
+def explain(source: str, err: str) -> str:
+    """A reason a person can act on, from a tool error."""
+    e = (err or "").lower()
+    name = source.split(":")[-1].capitalize()
+    if any(k in e for k in ("not enabled", "not installed", "no confluence", "not licensed", "unavailable", "no such app", "not available")):
+        return f"{name} is not enabled on this site or workspace (tool said: {err[:100]}). Remove it from docs_source or enable it."
+    if any(k in e for k in ("needs_reconnect", "reconnect", "unauthor", "401", "403", "forbidden", "not connected", "no connection", "no account")):
+        return f"{name} is not connected, or the connection needs renewing: run gravity connect for it (tool said: {err[:100]})"
+    if "404" in e or "not found" in e:
+        return f"{name} was not found at that site (tool said: {err[:100]})"
+    return f"{name} could not be read: {err[:150]}"
+
+
+def failed_payload(data: Any) -> str:
+    """The text of an error returned as data (success false / error key) instead of raised, else empty."""
+    if isinstance(data, dict):
+        inner = data.get("data") if isinstance(data.get("data"), dict) else {}
+        if data.get("successful") is False or data.get("success") is False or inner.get("successful") is False:
+            return str(data.get("error") or inner.get("error") or data.get("message") or "the tool reported failure")
+        if isinstance(data.get("error"), (str, dict)) and data.get("error") and not any(k in data for k in ("results", "values", "issues")):
+            return str(data["error"])
+    return ""
+
+
 def text_of(data: Any, depth: int = 0) -> str:
     """Body text from whatever shape a docs tool returns, with HTML tags removed."""
     if data is None or depth > 6:
@@ -175,7 +199,11 @@ async def fetch_confluence(call: Call, since: str, log: ToolLog, out: dict) -> N
         log.add("confluence.cql_search")
         data = await call("confluence.cql_search", {"cql": cql, "limit": 50, "expand": "content.version,content.history,content.metadata.labels"})
     except Exception as e:  # noqa: BLE001
-        out["failed"].append({"source": "docs:confluence", "error": str(e)[:200]})
+        out["failed"].append({"source": "docs:confluence", "error": explain("docs:confluence", str(e))})
+        return
+    bad = failed_payload(data)
+    if bad:
+        out["failed"].append({"source": "docs:confluence", "error": explain("docs:confluence", bad)})
         return
     hits = rows(data, "results")[:MAX_DOCS_PER_SOURCE]
     sem = asyncio.Semaphore(PARALLEL)
