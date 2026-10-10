@@ -175,7 +175,11 @@ def make_graph(deps: Deps):
         result["docs_sources_asked"] = wanted_docs
         result["docs_items_by_source"] = {s: sum(1 for i in items if i.type == "doc" and (str(i.meta.get("doc_source", "")).lower() in s or s in str(i.meta.get("doc_source", "")).lower())) for s in wanted_docs}
         result["dm_reads"] = len(ctx["log"].dm_reads())
-        result["page_preview"] = outputs.to_markdown(corpus, with_tables=False)[:5000]  # the text itself, without the long ledger table
+        # The report itself is the corpus (the page Gravity shows in full) plus the ledger table (CSV download). The result box only
+        # gets a short summary: the headline, the section list and the ledger size. No long text there, so nothing looks cut off.
+        result["page_summary"] = corpus.get("summary", "")
+        result["page_sections"] = [str(sec.get("heading", "")) for sec in corpus.get("sections", [])]
+        result["page_chars"] = len(outputs.to_markdown(corpus, with_tables=False))
         outputs.write_local_copy(corpus)
         ctx["corpus"], ctx["result"] = corpus, result
         return {"ctx": ctx, "corpus": corpus, "result": result}
