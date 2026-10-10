@@ -91,7 +91,7 @@ def test_merged_is_confirmed_from_repo_history_and_cycle_time_exists():
     out, _ = run()
     s = out["stats"]
     assert s["prs_authored"] == 5
-    assert s["prs_shipped"] == 4                      # #1, #2, #3 via merge commits, #5 via merged_at; #4 stays unmerged
+    assert s["prs_shipped"] == 3                      # code PRs only: the merged docs-only ADR PR is a proposal, not shipped code
     assert s["median_cycle_hours"] is not None
 
 
