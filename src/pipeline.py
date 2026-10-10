@@ -83,10 +83,11 @@ def _toks_clean(text: str) -> set[str]:
     return _toks(body)
 
 
-def merge_threads(items: list[Item], gap_minutes: int = 20) -> list[Item]:
-    """Only a clear continuation becomes one item: same channel, overlapping participants, close in time, the SAME ticket keys
-    (or none on both) and strongly the same topic (3+ shared words and 30% overlap). Anything else stays its own item,
-    so four different topics posted by one person in ten minutes stay four items."""
+def merge_threads(items: list[Item], gap_minutes: int = 10) -> list[Item]:
+    """Flat Slack messages that are really one conversation become one item. A message joins the group before it only when it is
+    the same channel and DM-ness, from an overlapping participant, at most `gap_minutes` after the group's last message, has
+    no conflicting ticket keys, and shares 2+ topic words with what the group has said so far. Different topics share no
+    words, so four topics posted by one person in a minute stay four items. Real threads are already one item each."""
     from datetime import datetime
 
     def when(i: Item) -> float:
@@ -94,18 +95,21 @@ def merge_threads(items: list[Item], gap_minutes: int = 20) -> list[Item]:
     threads = sorted((i for i in items if i.type == "thread"), key=lambda i: (i.meta.get("channel_id", ""), i.date, i.id))
     rest = [i for i in items if i.type != "thread"]
     groups: list[list[Item]] = []
+    vocab: list[set[str]] = []
     for it in threads:
+        mine = _toks_clean(it.text)
         last = groups[-1][-1] if groups else None
         if last and last.meta.get("channel_id") == it.meta.get("channel_id") and bool(last.meta.get("is_dm")) == bool(it.meta.get("is_dm")):
             gap = (when(it) - when(last)) / 60
-            a, b = _toks_clean(last.text), _toks_clean(it.text)
-            shared = len(a & b)
-            jac = shared / max(len(a | b), 1)
-            same_people = bool(set(last.meta.get("participants", [])) & set(it.meta.get("participants", [])))
-            if gap <= gap_minutes and same_people and set(last.keys) == set(it.keys) and shared >= 3 and jac >= 0.3:
+            same_people = bool(set(groups[-1][0].meta.get("participants", [])) & set(it.meta.get("participants", [])))
+            ka, kb = set().union(*(set(x.keys) for x in groups[-1])), set(it.keys)
+            keys_ok = not ka or not kb or bool(ka & kb)
+            if gap <= gap_minutes and same_people and keys_ok and len(vocab[-1] & mine) >= 2:
                 groups[-1].append(it)
+                vocab[-1] |= mine
                 continue
         groups.append([it])
+        vocab.append(set(mine))
     merged: list[Item] = []
     for g in groups:
         if len(g) == 1:
@@ -113,6 +117,7 @@ def merge_threads(items: list[Item], gap_minutes: int = 20) -> list[Item]:
             continue
         a = g[0]
         a.text = "\n".join(x.text for x in g)[:4000]
+        a.keys = sorted({k for x in g for k in x.keys})
         a.meta = {**a.meta, "messages": sum(int(x.meta.get("messages", 1)) for x in g), "my_messages": sum(int(x.meta.get("my_messages", 0)) for x in g),
                   "participants": sorted({p for x in g for p in x.meta.get("participants", [])}), "merged_ids": [x.id for x in g[1:]]}
         merged.append(a)
@@ -174,7 +179,8 @@ def ingest(raw: dict[str, Any], cfg: Config, log: ToolLog | None = None) -> Inge
             continue
         if log is not None:
             log.add("slack.read_history", channel=th["channel_id"], is_dm=th["channel_id"] in dm_ids)
-        x = N.normalize_thread(names[th["channel_id"]], th["channel_id"], th["messages"], cfg.slack_user_ids | set(raw.get("slack", {}).get("my_user_ids", [])))
+        x = N.normalize_thread(names[th["channel_id"]], th["channel_id"], th["messages"], cfg.slack_user_ids | set(raw.get("slack", {}).get("my_user_ids", [])),
+                           raw.get("slack", {}).get("permalink_base", ""))
         if isinstance(x, Item):
             x.meta["is_dm"] = th["channel_id"] in dm_ids
         take(x)
