@@ -1,0 +1,120 @@
+contract: v1
+name: engineering-contribution-memory
+version: 0.1.0
+description: Reads your last 6 months of GitHub (plus Jira, Slack and docs when connected), links PRs, tickets and discussions into projects, finds work that never made it into a ticket, and keeps an evidence-linked engineering profile current every week.
+kind: monitor
+
+runtime:
+  framework: langgraph
+  python: "3.12"
+  entrypoint: src/agent.py:graph
+  timeout_seconds: 1800
+
+dependencies:
+  lockfile: requirements.lock
+
+inputs:
+  - name: github_username
+    type: text
+    label: "Your GitHub username"
+    required: true
+  - name: repos_or_org
+    type: textarea
+    label: "Repos to read (owner/repo, comma separated)"
+    required: true
+  - name: jira_site
+    type: url
+    label: "Jira site URL (used when a Jira tool is available)"
+    required: false
+  - name: jira_projects
+    type: textarea
+    label: "Jira project keys, comma separated"
+    required: false
+  - name: slack_channels
+    type: textarea
+    label: "Slack channels to read (public or ones you opt in), comma separated"
+    required: false
+  - name: include_dms
+    type: static-dropdown
+    label: "Include DMs? (default No)"
+    options: ["No", "Yes"]
+    default: "No"
+    required: false
+  - name: display_name
+    type: text
+    label: "Your name as it appears in Jira, Slack and docs"
+    required: false
+  - name: slack_user_ids
+    type: text
+    label: "Your Slack user ID(s), comma separated"
+    required: false
+  - name: docs_source
+    type: text
+    label: "Docs source: Confluence, Notion or Google Drive (when available)"
+    required: false
+  - name: backfill_months
+    type: number
+    label: "Months to backfill on the first run"
+    default: 6
+    required: false
+  - name: role_and_level
+    type: text
+    label: "Your role and level (e.g. Software Engineer II, Payments)"
+    required: true
+  - name: review_framework
+    type: textarea
+    label: "Career ladder / review framework text (optional; enables evidence gaps)"
+    required: false
+  - name: request
+    type: static-dropdown
+    label: "What to produce"
+    options: ["auto", "weekly_summary", "one_on_one", "review_material", "interview_stories", "evidence_gaps"]
+    default: "auto"
+    required: false
+  - name: period_from
+    type: date
+    label: "Review material: from"
+    required: false
+  - name: period_to
+    type: date
+    label: "Review material: to"
+    required: false
+  - name: redact_terms
+    type: textarea
+    label: "Customer or internal names to strip from interview stories, comma separated"
+    required: false
+  - name: keep_internal_details
+    type: static-dropdown
+    label: "Keep internal names and figures in interview stories?"
+    options: ["No", "Yes"]
+    default: "No"
+    required: false
+  - name: timezone
+    type: text
+    label: "Your timezone"
+    default: "Asia/Kolkata"
+    required: false
+
+permissions:
+  tools:
+    - github.search_issues
+    - github.list_pr_files
+    - github.list_pr_reviews
+    - github.list_commits
+    - slack.list_channels
+    - slack.read_history
+  models:
+    tier: standard
+
+triggers:
+  manual: true
+  schedule:
+    cron: "0 17 * * 5"
+    consumer_can_change: true
+
+state:
+  max_kb: 256
+
+outputs:
+  profile: {renderer: markdown, label: "Profile / report", destinations: [download]}
+  ledger: {renderer: rows, label: "Item ledger (CSV)"}
