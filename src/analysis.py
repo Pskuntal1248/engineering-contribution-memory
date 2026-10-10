@@ -243,6 +243,9 @@ SKILL_LEXICON = {
 }
 
 
+_RANK = {"pr": 0, "ticket": 1, "doc": 2, "thread": 3, "commit": 4, "review": 5}
+
+
 def map_skills(items: list[Item]) -> list[dict[str, Any]]:
     out = []
     for skill, pat in sorted(SKILL_LEXICON.items()):
@@ -257,7 +260,9 @@ def map_skills(items: list[Item]) -> list[dict[str, Any]]:
             if in_title or len(hits) >= 2 or (i.type == "thread" and hits):
                 ids.append(i.id)
         if len(ids) >= 2 or (len(ids) == 1 and (re.search(pat, next(i.title for i in items if i.id == ids[0]), re.I) or next(i.type for i in items if i.id == ids[0]) == "thread")):
-            out.append({"skill": skill, "count": len(ids), "evidence": sorted(ids)[:6]})
+            by = {i.id: i for i in items}
+            work = {(by[x].keys[0] if by[x].keys else re.sub(r"^[A-Z][A-Z0-9]+-\d+[:\s-]*", "", by[x].title).strip().lower()) for x in ids}  # a PR, its ticket and commits are one piece of work
+            out.append({"skill": skill, "count": len(work), "evidence": sorted(ids, key=lambda x: (_RANK.get(by[x].type, 9), x))[:6]})
     return sorted(out, key=lambda d: (-d["count"], d["skill"]))
 
 
