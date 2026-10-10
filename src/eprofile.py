@@ -49,7 +49,10 @@ async def build(items: list[Item], *, username: str, names: set[str], llm, budge
     allv = {k: analysis.ThreadVerdict(**v) for k, v in prior_ver.items()}
     allv.update(verdicts)
     invisible = analysis.find_invisible(items, links, names, allv)
-    decisions = analysis.find_decisions(items, names, username)
+    dcands = [i for i in items if analysis.is_decision_candidate(i)]
+    dverd, n0 = await analysis.classify_decisions_with_model(llm, budget, dcands)
+    notes += n0
+    decisions = analysis.find_decisions(items, names, username, dverd)
 
     # projects (only those with real work, 2+ items), cards by model or rules
     base = [analysis.baseline_project_card(pid, c["item_ids"], by_id, username) for pid, c in sorted(clusters.items()) if len(c["item_ids"]) >= MIN_PROJECT_ITEMS]
