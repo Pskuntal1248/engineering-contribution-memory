@@ -70,9 +70,10 @@ def make_graph(deps: Deps):
         store: ProfileStore = deps.store_factory(state.get("memory")) if deps.store_factory else NativeMemoryStore(state.get("memory"), 256)
         prior = store.load()
         req = str(inp.get("request") or "auto")
+        has_memory = bool(prior.get("items") or prior.get("last_run"))  # an empty but completed run still counts
         if req == "auto":
-            req = "backfill" if not prior.get("items") else "weekly"
-        if req in ON_DEMAND and not prior.get("items"):
+            req = "weekly" if has_memory else "backfill"
+        if req in ON_DEMAND and not has_memory:
             req = "backfill"  # nothing to report from yet
         return {"ctx": {"mode": req, "prior": prior, "store": store, "notes": ["memory was unreadable, starting fresh"] if prior.get("_corrupt") else []}}
 
@@ -131,12 +132,17 @@ def make_graph(deps: Deps):
         names = {n for n in cfg.name_hints if n}
         colleagues = sorted({a for i in items for a in [i.author, *i.co_authors, *(i.meta.get("participants") or [])] if a and a not in names and a.lower() != cfg.username.lower()})
         terms = internal_terms(items, [t for t in str(inp.get("redact_terms", "")).replace("\n", ",").split(",")], cfg.repos[0].split("/")[0] if cfg.repos else "", cfg.jira_site)
-        quiet = quiet_week_line(ctx.get("since", "")[:10], deps.now().strftime("%Y-%m-%d")) if mode == "weekly" and not ctx["new_ids"] else None
+        window = ctx["new_ids"]
+        if mode == "weekly_summary":  # on request: the last 7 days of the saved profile
+            cut = (deps.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+            window = {i.id for i in items if i.date[:10] >= cut}
+        since = ctx.get("since", "")[:10] or (deps.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+        quiet = quiet_week_line(since, deps.now().strftime("%Y-%m-%d")) if mode in {"weekly", "weekly_summary"} and not window else None
         title = {"backfill": "Engineering profile", "weekly": "Weekly update", "weekly_summary": "Weekly summary", "one_on_one": "1:1 talking points",
                  "review_material": "Review material", "interview_stories": "Interview stories", "evidence_gaps": "Evidence gaps"}[mode]
         corpus, result = outputs.corpus_for(mode, prof, items, title=f"{title} - {cfg.username}", terms=terms, keep_internal=str(inp.get("keep_internal_details", "No")).lower() == "yes",
                                             colleagues=colleagues, names=names, date_from=str(inp.get("period_from", "") or ""), date_to=str(inp.get("period_to", "") or ""),
-                                            run_notes=ctx["notes"], failed=ctx["failed"], quiet_line=quiet, new_ids=ctx["new_ids"])
+                                            run_notes=ctx["notes"], failed=ctx["failed"], quiet_line=quiet, new_ids=window)
         result["model_calls"] = ctx["budget"].calls
         result["seconds"] = round(ctx["budget"].elapsed(), 1)
         result["new_items"] = len(ctx["new_ids"])
