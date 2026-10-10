@@ -94,7 +94,8 @@ def _group_links(items: list[Item]) -> list[str]:
     for i in sorted(items, key=lambda x: (x.type != "pr", x.date, x.id)):
         if i.type == "pr":
             tk = _title_key(i)
-            cand = [tk] if tk and tk in tickets else [k for k in i.keys if k in tickets]
+            named = f"{i.title} {i.meta.get('branch', '')} " + " ".join(re.findall(r"(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?|implement(?:s|ed)?)\s+([A-Z][A-Z0-9]+-\d+)", i.text or "", re.I))
+            cand = [tk] if tk and tk in tickets else [k for k in i.keys if k in tickets and k in named.upper()]  # "Related PAY-1" in a body is a mention, not the ticket this PR delivers
             gk = ("key:" + cand[0]) if cand else i.id
         elif i.type == "ticket":
             k = _title_key(i) or (i.keys[0] if i.keys else "")
