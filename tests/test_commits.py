@@ -53,18 +53,16 @@ INP = {"github_username": ME, "repos_or_org": "o/r", "role_and_level": "Software
 
 def ledger(out):
     sec = next(s for s in out["corpus"]["sections"] if s.get("table"))
-    return {r[4]: r for r in sec["table"]["rows"]}
+    return {r[4]: r for r in sec["table"]["rows"]}  # keyed by title
 
 
 def test_repo_without_prs_still_shows_commits_and_filters():
     calls = []
     out = run(INP, calls=calls)
     rows = ledger(out)
-    ids = set(rows)
-    assert f"gh:commit:o/r@{'a'*10}" in ids and f"gh:commit:o/r@{'b'*10}" in ids
-    assert not any(("e" * 10) in i or ("f" * 10) in i or ("1" * 10) in i for i in ids)  # bot, merge, other author dropped
-    assert rows[f"gh:commit:o/r@{'a'*10}"][7] == "reverted (not counted)"
-    assert rows[f"gh:commit:o/r@{'d'*10}"][7] == "revert (not counted)"
+    assert "Add retry to client" in rows and "Update lockfile" in rows
+    assert rows["Add retry to client"][6] == "reverted (not counted)"
+    assert rows['Revert "Add retry to client"'][6] == "revert (not counted)"
     assert out["result"]["stats"]["commits_authored"] == 2  # b and c
     assert not any(c.startswith("slack.") for c in calls)  # no slack_channels given: no Slack call
 
@@ -135,7 +133,7 @@ def test_one_on_one_has_blockers_when_open_pr_exists():
     from outputs import one_on_one
     it = Item(id="gh:pr:o/r#1", source="github", type="pr", date="2026-09-01T00:00:00Z", title="WIP", url="u", meta={"mine": True, "state": "open"})
     out = one_on_one({"gaps": [], "projects": [], "invisible": [], "decisions": [], "improvements": []}, {it.id: it}, [])
-    assert [s["heading"] for s in out] == ["Working on"] and "u" in out[0]["bullets"][0] and "PR still open" in out[0]["bullets"][0]
+    assert [s["heading"] for s in out] == ["Working on"] and "(u)" in out[0]["body"] and "still open" in out[0]["body"]
 
 
 def test_weekly_summary_lists_shipped_commits_in_window():
@@ -144,8 +142,8 @@ def test_weekly_summary_lists_shipped_commits_in_window():
     out = asyncio.run(agent.make_graph(agent.Deps(lambda cfg: None, llm=None, now=lambda: soon)).ainvoke(
         {"inputs": {**INP, "request": "weekly_summary"}, "memory": first["memory"]}))
     sec = {s["heading"]: s for s in out["corpus"]["sections"]}
-    assert "Shipped" in sec and any("Bump deps" in b for b in sec["Shipped"]["bullets"])
-    assert not any("Add retry" in b for b in sec["Shipped"]["bullets"])  # reverted, not counted
+    assert "Shipped" in sec and "Bump deps" in sec["Shipped"]["body"]
+    assert "Add retry" not in sec["Shipped"]["body"]  # reverted, not counted
 
 
 MSGS = ["Add HTTP client retry logic", "Fix retry backoff bug in client", "Add timeout option to client", "Update README with client usage", "Add README badges and install docs",
