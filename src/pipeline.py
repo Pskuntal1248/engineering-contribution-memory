@@ -71,6 +71,49 @@ def covered_by_pr(c: Item, prs: list[dict]) -> bool:
     return False
 
 
+_STOP = set("the a an and or to of in on for is it we i you this that was were be at as with from by are not but so if do did have has had just now then there their they them our can will would should could what when how why which who been into out up down over one two".split())
+
+
+def _toks(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9][a-z0-9_-]{2,}", text.lower()) if w not in _STOP}
+
+
+def merge_threads(items: list[Item], gap_minutes: int = 45) -> list[Item]:
+    """Several Slack messages about one problem become one item: same channel, same participants overlapping, close in time
+    and the same topic. The merged item keeps the earliest id; the others go in meta.merged_ids so they stay 'seen'."""
+    from datetime import datetime
+    def when(i: Item) -> float:
+        return datetime.fromisoformat(i.date.replace("Z", "+00:00")).timestamp()
+    threads = sorted((i for i in items if i.type == "thread"), key=lambda i: (i.meta.get("channel_id", ""), i.date, i.id))
+    rest = [i for i in items if i.type != "thread"]
+    groups: list[list[Item]] = []
+    for it in threads:
+        last = groups[-1] if groups else None
+        if last and last[-1].meta.get("channel_id") == it.meta.get("channel_id") and bool(last[-1].meta.get("is_dm")) == bool(it.meta.get("is_dm")):
+            gap = (when(it) - when(last[-1])) / 60
+            pool = set().union(*(_toks(x.text) for x in last))
+            mine_t = _toks(it.text)
+            shared = len(pool & mine_t)
+            same_people = bool(set(last[-1].meta.get("participants", [])) & set(it.meta.get("participants", [])))
+            if gap <= gap_minutes and same_people and (shared >= 2 or (gap <= 10 and shared >= 1)):
+                last.append(it)
+                continue
+        groups.append([it])
+    merged: list[Item] = []
+    for g in groups:
+        if len(g) == 1:
+            merged.append(g[0])
+            continue
+        a = g[0]
+        a.text = "\n".join(x.text for x in g)[:4000]
+        a.keys = sorted({k for x in g for k in x.keys})
+        a.refs = sorted({r for x in g for r in x.refs})
+        a.meta = {**a.meta, "messages": sum(int(x.meta.get("messages", 1)) for x in g), "my_messages": sum(int(x.meta.get("my_messages", 0)) for x in g),
+                  "participants": sorted({p for x in g for p in x.meta.get("participants", [])}), "merged_ids": [x.id for x in g[1:]]}
+        merged.append(a)
+    return rest + merged
+
+
 def ingest(raw: dict[str, Any], cfg: Config, log: ToolLog | None = None) -> Ingest:
     items: list[Item] = []
     skipped: list[Skipped] = []
@@ -136,6 +179,7 @@ def ingest(raw: dict[str, Any], cfg: Config, log: ToolLog | None = None) -> Inge
     items = [i for i in items if i.date]
     items, dm_dropped = drop_unconsented(items, cfg.include_dms)
     items, dups = N.dedupe(items)
+    items = merge_threads(items)
     N.mark_reverted([i for i in items if i.type == "pr"])
     N.mark_reverted_commits([i for i in items if i.type == "commit"])
     counts: dict[str, int] = {}
