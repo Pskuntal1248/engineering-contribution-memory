@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, TypedDict
 
@@ -94,7 +95,7 @@ def make_graph(deps: Deps):
             req = "weekly" if prior.get("backfill_done") else "backfill"  # weekly only after a backfill really completed
         if req in ON_DEMAND and not has_memory:
             req = "backfill"  # nothing to report from yet
-        return {"ctx": {"mode": req, "prior": prior, "store": store, "notes": ["memory was unreadable, starting fresh"] if prior.get("_corrupt") else (["the saved history was missing from the store, so this run backfills again"] if prior.get("_store_empty") else [])}}
+        return {"ctx": {"started": time.monotonic(), "mode": req, "prior": prior, "store": store, "notes": ["memory was unreadable, starting fresh"] if prior.get("_corrupt") else (["the saved history was missing from the store, so this run backfills again"] if prior.get("_store_empty") else [])}}
 
     async def fetch(state: State) -> dict:
         ctx = state["ctx"]
@@ -119,6 +120,7 @@ def make_graph(deps: Deps):
         mode, prior = ctx["mode"], ctx["prior"]
         names = {n for n in cfg.name_hints if n}
         budget = budget_for("backfill" if mode == "backfill" else "weekly" if mode == "weekly" else "on_demand")
+        budget.started = ctx.get("started", budget.started)  # the spec's time limit covers the whole run, source reads included
         old = [eprofile.expand(r) for r in prior.get("items", [])]
         new_ids: set[str] = set()
         notes = list(ctx["notes"])
@@ -198,7 +200,7 @@ def make_graph(deps: Deps):
             "items": [eprofile.compact(i, po.get(i.id, "")) for i in sorted(items, key=lambda x: (x.date, x.id))],
             "seen": sorted(set(prior.get("seen", [])) | {id_key(i.id) for i in items} | {id_key(m) for i in items for m in i.meta.get("merged_ids", [])}),
             "cursors": next_cursors(prior.get("cursors", {}), [i for i in items if i.source]),
-            "verdicts": prof["verdicts"], "cards": prof["card_store"], "last_run": deps.now().strftime("%Y-%m-%d"),
+            "verdicts": prof["verdicts"], "cards": prof["card_store"], "dverdicts": prof.get("dverdicts", {}), "last_run": deps.now().strftime("%Y-%m-%d"),
             "backfill_done": bool(prior.get("backfill_done")) or ctx["mode"] == "backfill",
             "gaps": [{"id": g["id"], "status": g["status"]} for g in prof["gaps"]],
         }
