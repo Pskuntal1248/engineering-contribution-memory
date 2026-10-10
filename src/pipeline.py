@@ -1,6 +1,8 @@
 """Raw source bundle -> clean, deduped, filtered Items. Pure; the graph and the tests both call this."""
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -57,8 +59,17 @@ def ingest(raw: dict[str, Any], cfg: Config, log: ToolLog | None = None) -> Inge
             # keep reviews I wrote, and reviews I received on my PRs (feedback patterns); drop everyone else's
             if reviewer.lower() == cfg.username.lower() or pr_author.lower() == cfg.username.lower():
                 take(N.normalize_review(rv, cfg.repo_aliases.get(repo, repo), int(num), pr_author, pr.get("html_url", ""), cfg.username, cfg.jira_projects))
+    pr_nums = {(p.get("_repo", ""), str(p.get("number"))) for p in prs}
     for c in raw.get("github", {}).get("commits", []):
-        take(N.normalize_commit(c, c.get("_repo", ""), cfg.username, cfg.jira_projects))
+        x = N.normalize_commit(c, c.get("_repo", ""), cfg.username, cfg.jira_projects)
+        if isinstance(x, Item):
+            first = x.title
+            m = re.search(r"\(#(\d+)\)\s*$", first) or re.match(r"Merge pull request #(\d+)", first)
+            if not x.meta.get("mine"):
+                x = Skipped(x.id, "commit by someone else")
+            elif first.startswith("Merge ") or (m and (c.get("_repo", ""), m.group(1)) in pr_nums):
+                x = Skipped(x.id, "merge commit or commit already counted through its PR")
+        take(x)
     for t in raw.get("jira", []):
         take(N.normalize_ticket(t, cfg.jira_site, cfg.name_hints))
     channels = raw.get("slack", {}).get("channels", [])
@@ -83,6 +94,7 @@ def ingest(raw: dict[str, Any], cfg: Config, log: ToolLog | None = None) -> Inge
     items, dm_dropped = drop_unconsented(items, cfg.include_dms)
     items, dups = N.dedupe(items)
     N.mark_reverted([i for i in items if i.type == "pr"])
+    N.mark_reverted_commits([i for i in items if i.type == "commit"])
     counts: dict[str, int] = {}
     for i in items:
         counts[i.type] = counts.get(i.type, 0) + 1
