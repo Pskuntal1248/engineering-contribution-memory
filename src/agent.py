@@ -162,12 +162,13 @@ def make_graph(deps: Deps):
             cut = (deps.now() - timedelta(days=7)).strftime("%Y-%m-%d")
             window = {i.id for i in items if i.date[:10] >= cut}
         since = ctx.get("since", "")[:10] or (deps.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+        window_label = f"dated since {cut} (the last 7 days)" if mode == "weekly_summary" else "new since the last run"
         quiet = quiet_week_line(since, deps.now().strftime("%Y-%m-%d")) if mode in {"weekly", "weekly_summary"} and not window else None
         title = {"backfill": "Engineering profile", "weekly": "Weekly update", "weekly_summary": "Weekly summary", "one_on_one": "1:1 talking points",
                  "review_material": "Review material", "interview_stories": "Interview stories", "evidence_gaps": "Evidence gaps"}[mode]
         corpus, result = outputs.corpus_for(mode, prof, items, title=f"{title} - {cfg.username}", terms=terms, keep_internal=str(inp.get("keep_internal_details", "No")).lower() == "yes",
                                             colleagues=colleagues, names=names, date_from=str(inp.get("period_from", "") or ""), date_to=str(inp.get("period_to", "") or ""),
-                                            run_notes=ctx["notes"], failed=ctx["failed"], quiet_line=quiet, new_ids=window)
+                                            run_notes=ctx["notes"], failed=ctx["failed"], quiet_line=quiet, new_ids=window, window_label=window_label)
         result["model_calls"] = ctx["budget"].calls
         result["seconds"] = round(ctx["budget"].elapsed(), 1)
         result["new_items"] = len(ctx["new_ids"])
