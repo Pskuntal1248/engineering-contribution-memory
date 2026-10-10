@@ -36,7 +36,7 @@ inputs:
     required: true
   - name: include_dms
     type: static-dropdown
-    label: "Include DMs? (default No)"
+    label: "Include DMs? (default No). With Yes, only the DMs you list in the channels box are read (a person's Slack user ID), or write *dm* to opt in to all. Private channels are read only when you list them"
     options: ["No", "Yes"]
     default: "No"
     required: false
@@ -66,6 +66,14 @@ inputs:
   - name: review_framework
     type: textarea
     label: "Career ladder / review framework text (optional; enables evidence gaps)"
+    required: false
+  - name: ask
+    type: text
+    label: "Or type what you want, e.g. weekly summary, 1:1 points, review material for April to September, interview stories, evidence gaps"
+    required: false
+  - name: team_changes
+    type: textarea
+    label: "Team changes in the period (optional), one per line: YYYY-MM-DD: Team name"
     required: false
   - name: request
     type: static-dropdown
