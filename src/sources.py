@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from typing import Any, Awaitable, Callable, Protocol
 
 from guards import ToolLog, err_text
@@ -203,7 +204,10 @@ class GatewaySource:
         def covered(c: dict) -> bool:
             """Already part of one of the user's PRs (merge sha, or same title): the PR's own file list gives the size, so no get_commit call."""
             msg = str(((c.get("commit") or {}).get("message")) or c.get("message") or "").splitlines()[:1]
-            return str(c.get("sha")) in pr_shas or bool(msg and msg[0].strip() in pr_titles)
+            first = re.sub(r"\s*\(#\d+\)\s*$", "", msg[0].strip()) if msg else ""
+            if first.startswith(("Merge pull request #", "Merge branch ", "Merge remote-tracking")):
+                return True  # a merge commit carries no work of its own (the PR does); list_pull_requests may not return merge shas
+            return str(c.get("sha")) in pr_shas or bool(first and first in pr_titles)
 
         async def detail(n: int, c: dict) -> None:
             c["_repo"] = repo
