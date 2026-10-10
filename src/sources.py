@@ -12,6 +12,8 @@ from guards import ToolLog
 Call = Callable[[str, dict], Awaitable[Any]]  # call("github.list_pr_reviews", {...}) -> parsed payload
 
 MAX_PRS_PER_REPO = 600
+MAX_COMMITS_PER_REPO = 300
+MAX_COMMIT_LOOKUPS = 100
 MAX_PR_FILE_LOOKUPS = 400  # file lists are one call per PR; bounded and reported
 
 
@@ -76,7 +78,8 @@ class GatewaySource:
     async def fetch(self, since: str, until: str | None, log: ToolLog) -> dict[str, Any]:
         out: dict[str, Any] = {"github": {"prs": [], "reviews": {}, "commits": []}, "jira": [], "slack": {"channels": [], "threads": []}, "docs": [], "failed": [], "capped": []}
         await self._github(out, since, log)
-        await self._slack(out, since, log)
+        if self.slack_channels or self.include_dms:  # no Slack call at all unless the user named channels
+            await self._slack(out, since, log)
         if "jira.search" in self.has:
             try:
                 log.add("jira.search", projects=self.jira_projects)
@@ -118,10 +121,35 @@ class GatewaySource:
                     out["github"]["prs"].append(p)
                     owner, name = repo.split("/", 1)
                     out["github"]["reviews"][f"{repo}#{p.get('number')}"] = _rows(await self.call("github.list_pr_reviews", {"owner": owner, "repo": name, "pull_number": p.get("number")}))
+                await self._commits(out, repo, since, log)
             except Exception as e:  # noqa: BLE001
                 out["failed"].append({"source": f"github:{repo}", "error": str(e)[:200]})
         if len(out["github"]["prs"]) >= MAX_PRS_PER_REPO * len(self.repos):
             out["capped"].append("github PRs hit the per-repo cap")
+
+    async def _commits(self, out: dict, repo: str, since: str, log: ToolLog) -> None:
+        """Commits by the user, so repos without PRs still show work. Bots, merges and PR-covered commits are dropped in ingest."""
+        owner, name = repo.split("/", 1)
+        try:
+            log.add("github.list_commits", repo=repo)
+            rows = _rows(await self.call("github.list_commits", {"owner": owner, "repo": name, "author": self.username, "since": since, "per_page": 100}), "commits")
+        except Exception as e:  # noqa: BLE001 - named in the result
+            out["failed"].append({"source": f"github-commits:{repo}", "error": str(e)[:200]})
+            return
+        if len(rows) >= MAX_COMMITS_PER_REPO:
+            out["capped"].append(f"commits for {repo}: first {MAX_COMMITS_PER_REPO} only")
+        for n, c in enumerate(rows[:MAX_COMMITS_PER_REPO]):
+            c["_repo"] = repo
+            if n < MAX_COMMIT_LOOKUPS and not c.get("files"):  # list_commits has no file list; size needs one lookup per commit
+                try:
+                    full = await self.call("github.get_commit", {"owner": owner, "repo": name, "ref": c.get("sha", "")})
+                    if isinstance(full, dict):
+                        c["files"], c["stats"] = full.get("files"), full.get("stats")
+                except Exception:  # noqa: BLE001 - size stays unknown, the commit is still listed
+                    pass
+            elif n >= MAX_COMMIT_LOOKUPS and n == MAX_COMMIT_LOOKUPS:
+                out["capped"].append(f"commit sizes for {repo}: first {MAX_COMMIT_LOOKUPS} commits only")
+            out["github"]["commits"].append(c)
 
     async def _slack(self, out: dict, since: str, log: ToolLog) -> None:
         try:
