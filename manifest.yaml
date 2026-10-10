@@ -119,6 +119,9 @@ permissions:
     - jira.list_issue_comments
     - confluence.cql_search
     - confluence.get_page_by_id
+    - confluence.get_pages
+    - confluence.get_current_user
+    - confluence.get_labels_for_page
     - notion.search_notion_page
     - notion.get_page_markdown
     - notion.list_users
