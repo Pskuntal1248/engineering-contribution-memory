@@ -1,85 +1,85 @@
 
-  engineering-contribution-memory@0.1.0  run grt_…jhBU · 26 tools declared
+  engineering-contribution-memory@0.1.0  run grt_…aav0 · 26 tools declared
 
   ● load                                                                                                                      0.0s
-  ● fetch                                                                                                                   105.9s
+  ● fetch                                                                                                                   103.0s
     ✓ github.search_issues                            11 found                                                                7.9s
-    ✓ slack.list_channels                             4 found                                                                 6.7s
-    ✓ jira.search_issues                              8 found                                                                 9.3s
-    ✗ confluence.cql_search                           error: {"code":401,"message":"Unauthorized; scope does not match"}      6.6s
-    ✓ notion.list_users                               3 found                                                                 7.0s
-    ✗ confluence.get_current_user                     error: Unauthorized: Authentication failed or missing credentials.      7.0s
+    ✓ slack.list_channels                             4 found                                                                 7.0s
+    ✓ jira.search_issues                              8 found                                                                 7.7s
+    ✗ confluence.cql_search                           error: {"code":401,"message":"Unauthorized; scope does not match"}      6.8s
+    ✓ notion.list_users                               3 found                                                                 7.2s
+    ✗ confluence.get_current_user                     error: Unauthorized: Authentication failed or missing credentials.      7.5s
                                                       Please check your authentication token.                                     
-    ✓ slack.search_messages                           12 found                                                                9.2s
+    ✓ slack.search_messages                           12 found                                                                8.1s
     ✓ notion.search_notion_page                       3 found                                                                 7.9s
+    ✓ jira.get_issue                                  4 found                                                                 7.5s
+    ✓ jira.get_issue                                  10051                                                                   7.8s
+    ✓ jira.get_issue                                  10050                                                                  14.5s
+    ✓ jira.get_issue                                  10049                                                                   8.3s
+    ✓ jira.get_issue                                  10048                                                                   8.5s
+    ✓ jira.get_issue                                  10047                                                                   8.3s
     ✓ github.search_issues                                                                                                    8.3s
-    ✓ jira.get_issue                                  4 found                                                                 8.4s
-    ✓ jira.get_issue                                  10051                                                                   7.4s
-    ✓ jira.get_issue                                  10050                                                                   8.0s
-    ✓ jira.get_issue                                  10049                                                                  10.1s
-    ✓ jira.get_issue                                  10048                                                                   8.1s
-    ✓ jira.get_issue                                  10047                                                                   7.6s
     ✓ confluence.get_pages                            11 found                                                                7.5s
-    ✓ notion.get_page_markdown                        3d7d2067-fa9c-80d3-a9d8-e12ad2901b48                                    7.0s
+    ✓ notion.get_page_markdown                        3d7d2067-fa9c-80d3-a9d8-e12ad2901b48                                    6.8s
     ✓ notion.get_page_markdown                        3f5d2067-fa9c-80e1-ba57-f18448a1a6a5                                    6.4s
-    ✓ slack.fetch_message_thread_from_a_conversation  4 found                                                                 6.5s
-    ✓ slack.fetch_message_thread_from_a_conversation  4 found                                                                 6.3s
-    ✓ slack.fetch_message_thread_from_a_conversation  2 found                                                                12.1s
-    ✓ slack.fetch_message_thread_from_a_conversation  2 found                                                                 6.2s
-    ✓ github.list_pull_requests                       11 found                                                                6.9s
-    ✓ jira.get_issue                                  10046                                                                   9.8s
-    ✓ jira.get_issue                                  10045                                                                   7.5s
-    ✓ confluence.get_labels_for_page                                                                                          6.6s
-    ✓ notion.get_page_markdown                        8b6d2067-fa9c-835b-b20b-81afc4322391                                    6.8s
-    ✓ github.list_pr_files                                                                                                    7.1s
-    ✓ github.list_pr_reviews                                                                                                  7.5s
-    ✓ github.list_pr_files                                                                                                    7.3s
-    ✓ github.list_pr_reviews                                                                                                  6.6s
-    ✓ github.list_pr_files                                                                                                    6.9s
-    ✓ github.list_pr_reviews                                                                                                  6.7s
+    ✓ slack.fetch_message_thread_from_a_conversation  4 found                                                                 6.1s
+    ✓ slack.fetch_message_thread_from_a_conversation  4 found                                                                 6.4s
+    ✓ slack.fetch_message_thread_from_a_conversation  2 found                                                                 6.3s
+    ✓ slack.fetch_message_thread_from_a_conversation  2 found                                                                 6.5s
+    ✓ jira.get_issue                                  10046                                                                   6.9s
+    ✓ jira.get_issue                                  10045                                                                   7.1s
+    ✓ github.list_pull_requests                       11 found                                                                6.8s
+    ✓ notion.get_page_markdown                        8b6d2067-fa9c-835b-b20b-81afc4322391                                    6.7s
+    ✓ confluence.get_labels_for_page                                                                                          6.7s
+    ✓ github.list_pr_files                                                                                                    7.2s
+    ✓ github.list_pr_reviews                                                                                                  6.9s
+    ✓ github.list_pr_files                                                                                                    7.6s
+    ✓ github.list_pr_reviews                                                                                                  6.8s
+    ✓ github.list_pr_files                                                                                                    7.4s
+    ✓ github.list_pr_reviews                                                                                                  7.0s
     ✓ github.list_pr_files                                                                                                    8.1s
-    ✓ github.list_pr_reviews                                                                                                  6.6s
-    ✓ github.list_pr_files                                                                                                    6.6s
-    ✓ github.list_pr_reviews                                                                                                  8.3s
-    ✓ confluence.get_labels_for_page                                                                                          6.6s
-    ✓ github.list_pr_files                                                                                                    7.5s
-    ✓ github.list_pr_reviews                          5478514195                                                              6.6s
-    ✓ github.list_pr_files                                                                                                    6.6s
-    ✓ github.list_pr_reviews                          2 found                                                                 7.0s
-    ✓ github.list_pr_files                                                                                                    6.8s
-    ✓ github.list_pr_reviews                          5478511918                                                              7.2s
+    ✓ github.list_pr_reviews                                                                                                  6.9s
+    ✓ github.list_pr_files                                                                                                    6.7s
+    ✓ github.list_pr_reviews                                                                                                  7.3s
+    ✓ confluence.get_labels_for_page                                                                                          7.0s
     ✓ github.list_pr_files                                                                                                    7.1s
-    ✓ github.list_pr_reviews                          5478511206                                                              6.9s
+    ✓ github.list_pr_reviews                          5478514195                                                              6.7s
+    ✓ github.list_pr_files                                                                                                    6.8s
+    ✓ github.list_pr_reviews                          2 found                                                                 6.6s
+    ✓ github.list_pr_files                                                                                                    7.1s
+    ✓ github.list_pr_reviews                          5478511918                                                              7.0s
+    ✓ github.list_pr_files                                                                                                    7.0s
+    ✓ github.list_pr_reviews                          5478511206                                                              7.0s
     ✓ github.list_pr_files                                                                                                    6.5s
     ✓ github.list_pr_reviews                          5478510454                                                              6.5s
-    ✓ confluence.get_labels_for_page                                                                                          7.7s
-    ✓ github.list_pr_files                                                                                                    7.2s
-    ✓ github.list_pr_reviews                          5478514882                                                             11.6s
-    ✓ confluence.get_labels_for_page                                                                                          6.7s
-    ✓ github.list_commits                                                                                                     7.5s
-    ✓ confluence.get_labels_for_page                  163860                                                                  6.6s
-    ✓ github.get_commit                               https://api.github.com/repos/Pskuntal1248/uc10-synthetic-test-data/…    6.9s
-    ✓ github.get_commit                               https://api.github.com/repos/Pskuntal1248/uc10-synthetic-test-data/…    7.4s
-    ✓ github.get_commit                               https://api.github.com/repos/Pskuntal1248/uc10-synthetic-test-data/…    7.6s
-    ✓ github.get_commit                               https://api.github.com/repos/Pskuntal1248/uc10-synthetic-test-data/…    8.1s
-    ✓ github.get_commit                               https://api.github.com/repos/Pskuntal1248/uc10-synthetic-test-data/…    7.8s
+    ✓ github.list_pr_files                                                                                                    6.5s
+    ✓ github.list_pr_reviews                          5478514882                                                              6.5s
+    ✓ confluence.get_labels_for_page                                                                                          6.6s
+    ✓ github.list_commits                                                                                                     7.6s
+    ✓ confluence.get_labels_for_page                                                                                          6.6s
+    ✓ confluence.get_labels_for_page                  163860                                                                  7.3s
+    ✓ github.get_commit                               https://api.github.com/repos/Pskuntal1248/uc10-synthetic-test-data/…    6.5s
+    ✓ github.get_commit                               https://api.github.com/repos/Pskuntal1248/uc10-synthetic-test-data/…    6.6s
     ✓ github.get_commit                               https://api.github.com/repos/Pskuntal1248/uc10-synthetic-test-data/…    7.7s
     ✓ github.get_commit                               https://api.github.com/repos/Pskuntal1248/uc10-synthetic-test-data/…    6.8s
-    ✓ github.get_commit                               https://api.github.com/repos/Pskuntal1248/uc10-synthetic-test-data/…    7.5s
+    ✓ github.get_commit                               https://api.github.com/repos/Pskuntal1248/uc10-synthetic-test-data/…    7.2s
+    ✓ github.get_commit                               https://api.github.com/repos/Pskuntal1248/uc10-synthetic-test-data/…    7.1s
     ✓ github.get_commit                               https://api.github.com/repos/Pskuntal1248/uc10-synthetic-test-data/…    7.6s
-    ✓ github.get_commit                               https://api.github.com/repos/Pskuntal1248/uc10-synthetic-test-data/…    7.0s
-    ✓ confluence.get_labels_for_page                                                                                          7.0s
-    ✓ github.get_commit                               https://api.github.com/repos/Pskuntal1248/uc10-synthetic-test-data/…    6.9s
     ✓ github.get_commit                               https://api.github.com/repos/Pskuntal1248/uc10-synthetic-test-data/…    6.5s
-    ✓ confluence.get_labels_for_page                                                                                          7.2s
-    ✓ confluence.get_labels_for_page                                                                                          6.7s
-    ✓ confluence.get_labels_for_page                                                                                          6.6s
-    ✓ confluence.get_labels_for_page                                                                                          6.7s
+    ✓ github.get_commit                               https://api.github.com/repos/Pskuntal1248/uc10-synthetic-test-data/…    7.4s
+    ✓ github.get_commit                               https://api.github.com/repos/Pskuntal1248/uc10-synthetic-test-data/…    6.8s
     ✓ confluence.get_labels_for_page                                                                                          7.1s
-  ● analyse                                                                                                                  24.3s
-    ◆ openai/gpt-6-luna                                                                                                       7.1s
-    ◆ openai/gpt-6-luna                                                                                                       4.0s
-    ◆ openai/gpt-6-luna                                                                                                      10.2s
+    ✓ github.get_commit                               https://api.github.com/repos/Pskuntal1248/uc10-synthetic-test-data/…    6.8s
+    ✓ github.get_commit                               https://api.github.com/repos/Pskuntal1248/uc10-synthetic-test-data/…    7.0s
+    ✓ confluence.get_labels_for_page                                                                                          6.8s
+    ✓ confluence.get_labels_for_page                                                                                          6.8s
+    ✓ confluence.get_labels_for_page                                                                                          6.5s
+    ✓ confluence.get_labels_for_page                                                                                          6.6s
+    ✓ confluence.get_labels_for_page                                                                                          6.6s
+  ● analyse                                                                                                                  24.1s
+    ◆ openai/gpt-6-luna                                                                                                       7.7s
+    ◆ openai/gpt-6-luna                                                                                                       4.1s
+    ◆ openai/gpt-6-luna                                                                                                       9.3s
   ● render                                                                                                                    0.0s
   ● persist                                                                                                                   0.0s
   ╭─ result ───────────────────────────────────────────────────────────────────────────────╮
@@ -106,7 +106,7 @@
   │ • no review framework given: evidence gaps skipped; a framework would enable them      │
   │ ledger_rows           38                                                               │
   │ model_calls           4                                                                │
-  │ seconds               130.2                                                            │
+  │ seconds               127.2                                                            │
   │ new_items             38                                                               │
   │ docs_sources_asked                                                                     │
   │ • confluence                                                                           │
@@ -125,7 +125,7 @@
   │ • Evidence gaps                                                                        │
   │ • What could not be done                                                               │
   │ • Appendix: item ledger (also the CSV download)                                        │
-  │ page_chars            7378                                                             │
+  │ page_chars            7329                                                             │
   ╰────────────────────────────────────────────────────────────────────────────────────────╯
 
-  ✓ Done in 135.2s  
+  ✓ Done in 132.1s  

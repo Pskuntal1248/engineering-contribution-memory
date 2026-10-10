@@ -1,9 +1,9 @@
 
-  engineering-contribution-memory@0.1.0  run grt_…BxFw · 26 tools declared
+  engineering-contribution-memory@0.1.0  run grt_…aKUY · 26 tools declared
 
   ● load                                          0.0s
   ● fetch                                         0.0s
-  ● analyse                                       3.0s
+  ● analyse                                       2.8s
   ● render                                        0.0s
   ● persist                                       0.0s
   ╭─ result ───────────────────────────────────────────────────────────────────────────────╮
@@ -18,9 +18,9 @@
   │ evidence_gaps                                                                          │
   │ expectation                                                                  status    │
   │ Delivers complex features end to end with little guidance                    backed    │
-  │ Writes clear design docs for work that spans several services                backed    │
+  │ Writes clear design docs for work that spans several services                thin      │
   │ Reviews teammates' code and raises the quality bar in reviews                missing   │
-  │ Mentors junior engineers and helps them grow                                 thin      │
+  │ Mentors junior engineers and helps them grow                                 missing   │
   │ Owns the reliability of the services they ship, including on-call follow-up  thin      │
   │ Leads a cross-team technical decision                                        missing   │
   │ Communicates status and risks to stakeholders without being asked            missing   │
@@ -29,7 +29,7 @@
   │ • topic grouping used embeddings (1 call to the Gravity endpoint) plus keywords        │
   │ ledger_rows           38                                                               │
   │ model_calls           1                                                                │
-  │ seconds               3.0                                                              │
+  │ seconds               2.8                                                              │
   │ new_items             0                                                                │
   │ docs_sources_asked                                                                     │
   │ • confluence                                                                           │
@@ -41,7 +41,7 @@
   │ page_sections                                                                          │
   │ • Evidence gaps                                                                        │
   │ • Appendix: item ledger (also the CSV download)                                        │
-  │ page_chars            2416                                                             │
+  │ page_chars            2082                                                             │
   ╰────────────────────────────────────────────────────────────────────────────────────────╯
 
-  ✓ Done in 8.0s  
+  ✓ Done in 7.6s  

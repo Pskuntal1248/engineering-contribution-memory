@@ -1,9 +1,9 @@
 
-  engineering-contribution-memory@0.1.0  run grt_…OsR8 · 26 tools declared
+  engineering-contribution-memory@0.1.0  run grt_…hoGs · 26 tools declared
 
   ● load                                          0.0s
   ● fetch                                         0.0s
-  ● analyse                                       3.0s
+  ● analyse                                       2.8s
   ● render                                        0.0s
   ● persist                                       0.0s
   ╭─ result ───────────────────────────────────────────────────────────────────────────────╮
@@ -20,7 +20,7 @@
   │ • no review framework given: evidence gaps skipped; a framework would enable them      │
   │ ledger_rows           38                                                               │
   │ model_calls           1                                                                │
-  │ seconds               3.0                                                              │
+  │ seconds               2.9                                                              │
   │ new_items             0                                                                │
   │ docs_sources_asked                                                                     │
   │ • confluence                                                                           │
@@ -37,7 +37,7 @@
   │ • Decision needing input                                                               │
   │ • What could not be done                                                               │
   │ • Appendix: item ledger (also the CSV download)                                        │
-  │ page_chars            4168                                                             │
+  │ page_chars            4173                                                             │
   ╰────────────────────────────────────────────────────────────────────────────────────────╯
 
-  ✓ Done in 7.9s  
+  ✓ Done in 7.8s  
