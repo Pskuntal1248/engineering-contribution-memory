@@ -98,18 +98,82 @@ def find_invisible(items: list[Item], links: dict[str, list[str]], display_names
     return sorted(out, key=lambda d: (d["date"], d["thread"]))
 
 
-def find_decisions(items: list[Item], display_names: set[str], username: str) -> list[dict[str, Any]]:
-    """Design docs / ADRs. Role: author of the doc = led; editor or reviewer only = contributed."""
+_DECISION_WORDS = re.compile(r"\b(adr|rfc|design docs?|design proposal|proposal|decision records?|decision)\b", re.I)
+_DECISION_PATH = re.compile(r"(^|/)(adrs?|rfcs?|decisions?)/|(^|/)docs/design/", re.I)
+
+
+def is_decision_candidate(it: Item) -> bool:
+    """A PR or doc that looks like an ADR / design doc / proposal: by title, labels, branch or the path it adds."""
+    if it.type not in {"pr", "doc"} or not it.meta.get("mine") or it.meta.get("is_revert") or it.meta.get("reverted"):
+        return False
+    hay = " ".join([it.title, " ".join(it.meta.get("labels", []) or []), str(it.meta.get("branch", ""))])
+    return bool(_DECISION_WORDS.search(hay) or any(_DECISION_PATH.search(p) for p in it.meta.get("paths", []) or []))
+
+
+class DecisionVerdict(BaseModel):
+    item_id: str = Field(description="the id given in the input, copied exactly")
+    is_decision: bool = Field(description="true only if the text records a technical decision or design choice")
+    summary: str = Field(description="one sentence from the given text only: what was decided")
+
+
+class DecisionVerdicts(BaseModel):
+    verdicts: list[DecisionVerdict]
+
+
+async def classify_decisions_with_model(llm: LLM | None, budget: Budget, cands: list[Item], batch: int = 10,
+                                        max_batches: int = 5) -> tuple[dict[str, DecisionVerdict], list[str]]:
+    """Model pass on ADR / design-doc candidates: confirms they record a decision and writes the one-line summary."""
+    out: dict[str, DecisionVerdict] = {}
+    if not cands:
+        return out, []
+    if llm is None:
+        return out, ["model not used for decisions (rules only)"]
+    notes: list[str] = []
+    sys = ("You check whether each item records a technical decision or design choice made by the user (an ADR, design doc, RFC or proposal). "
+           "Use ONLY the given text. Say what was decided in one sentence. Copy item_id exactly.")
+    sent = cands[: batch * max_batches]
+    for i in range(0, len(sent), batch):
+        chunk = sent[i : i + batch]
+        payload = {"items": [{"item_id": c.id, "title": c.title, "text": c.text[:800], "files": (c.meta.get("paths") or [])[:6]} for c in chunk]}
+        try:
+            res = await llm.structured(DecisionVerdicts, sys, payload, budget)
+        except BudgetExceeded as e:
+            notes.append(str(e))
+            break
+        except Exception as e:  # noqa: BLE001
+            notes.append(f"model call failed for decisions: {str(e)[:120]}")
+            continue
+        ok = {c.id for c in chunk}
+        for v in res.verdicts:  # type: ignore[attr-defined]
+            if v.item_id in ok:
+                out[v.item_id] = v
+    return out, notes
+
+
+def find_decisions(items: list[Item], display_names: set[str], username: str,
+                   verdicts: dict[str, DecisionVerdict] | None = None) -> list[dict[str, Any]]:
+    """Design docs / ADRs, as docs or as PRs. Role: author = led; editor or reviewer only = contributed.
+    A model verdict, when there is one, can reject a candidate; without one the rules decide."""
     out = []
     for it in items:
-        if it.type != "doc" or not (it.meta.get("mine")):
+        v = (verdicts or {}).get(it.id)
+        if it.type == "doc":
+            if not it.meta.get("mine"):
+                continue
+            labs = " ".join(it.meta.get("labels", [])).lower()
+            if not (re.search(r"\b(adr|rfc|design)\b", labs + " " + it.title.lower()) and (_DECISION.search(it.text) or (v and v.is_decision))):
+                continue
+        elif it.type == "pr":
+            if not is_decision_candidate(it) or (v is not None and not v.is_decision):
+                continue
+        else:
             continue
-        labs = " ".join(it.meta.get("labels", [])).lower()
-        if not (re.search(r"\b(adr|rfc|design)\b", labs + " " + it.title.lower()) and _DECISION.search(it.text)):
+        if v is not None and not v.is_decision:
             continue
         author_is_me = it.author in display_names or it.author.lower() == username.lower()
+        summary = v.summary if v and v.summary else re.sub(r"\s+", " ", it.text or it.title)[:220]
         out.append({"doc": it.id, "title": it.title, "role": "led" if author_is_me else "contributed", "evidence": [it.id],
-                    "summary": re.sub(r"\s+", " ", it.text)[:220], "confidential": bool(it.meta.get("confidential")),
+                    "summary": summary, "confidential": bool(it.meta.get("confidential")),
                     "co_contributors": [] if author_is_me else [it.author]})
     return sorted(out, key=lambda d: d["doc"])
 
