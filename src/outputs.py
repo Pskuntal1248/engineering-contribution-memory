@@ -2,6 +2,7 @@
 from facts, optionally reworded by the model with evidence ids that code validates."""
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import ledger
@@ -10,6 +11,39 @@ from metrics import shipped
 from models import Item
 
 LEDGER_CAP = 6000
+
+
+_SLACK_ID = re.compile(r"\b[UW](?=[A-Z0-9]*\d)[A-Z0-9]{8,11}\b")
+_TRIVIAL = re.compile(r"^\s*(initial commit|first commit|init(ial(ize|ise)?)?\b|repository init|repo init|bootstrap|scaffold|add (readme|license|gitignore)|update readme|chore: ?init)", re.I)
+_PLACEHOLDER = re.compile(r"\bnot stated\b|model summary needed|\(unlinked\)", re.I)
+
+
+def short(title: str, n: int = 70) -> str:
+    """A title for display: trailing [tags] dropped, cut at a word boundary, never mid-bracket."""
+    t = re.sub(r"\s*\[[^\]]*\]\s*$", "", (title or "").strip()) or (title or "").strip()
+    if len(t) <= n:
+        return t
+    cut = t[:n].rsplit(" ", 1)[0]
+    if cut.count("[") > cut.count("]"):
+        cut = cut[: cut.rfind("[")].rstrip()
+    return cut.rstrip(" ,;:-") + "..."
+
+
+def no_ids(text: str) -> str:
+    """Raw Slack user IDs are never shown."""
+    t = re.sub(r"\b(with|and|by|from)\s+" + _SLACK_ID.pattern + r"(?:,\s*" + _SLACK_ID.pattern + r")*", "", text)
+    t = _SLACK_ID.sub("a teammate", t)
+    return re.sub(r"\s{2,}", " ", t).replace(" .", ".").replace(" ;", ";")
+
+
+def _clean_obj(x: Any) -> Any:
+    if isinstance(x, str):
+        return no_ids(x)
+    if isinstance(x, list):
+        return [_clean_obj(v) for v in x]
+    if isinstance(x, dict):
+        return {k: (v if k in {"url", "id"} else _clean_obj(v)) for k, v in x.items()}
+    return x
 
 
 def _link(it: Item | None) -> str:
@@ -25,7 +59,7 @@ def _cite(ids: list[str], by_id: dict[str, Item], n: int = 3) -> str:
     for i in ids[:n]:
         it = by_id.get(i)
         if it:
-            out.append(f"{it.title[:48]} ({it.url or it.id})")
+            out.append(f"{short(it.title, 60)} ({it.url or it.id})")
     return "; ".join(out)
 
 
@@ -50,13 +84,14 @@ def build_statements(profile: dict[str, Any], by_id: dict[str, Item], kind: str,
                 tm = ""
                 if len(p.get("teams") or []) > 1:
                     tm = " Teams: " + ", ".join(f"{t['team']}{' (from ' + t['since'] + ')' if t['since'] else ''}" for t in p["teams"]) + "."
-                sts.append(Statement(f"{p['name']}: {p['outcome']}; role {p['role']}{co}.{tm}", p["evidence"][:6], p["role"]))
+                outcome = "" if _PLACEHOLDER.search(p["outcome"]) else f": {p['outcome']}"
+                sts.append(Statement(f"{p['name']}{outcome}; my role: {p['role']}{co}.{tm}", p["evidence"][:6], p["role"]))
     for v in profile["invisible"]:
         if within(v["evidence"]):
             sts.append(Statement(f"Not in any ticket ({v['label'].replace('_',' ')}): {v['summary']}", v["evidence"], "supported"))
     for d in profile["decisions"]:
         if within(d["evidence"]):
-            sts.append(Statement(f"Decision ({d['role']}): {d['title']}. {d['summary']}", d["evidence"], d["role"]))
+            sts.append(Statement(f"Decision ({d['role']}): {short(d['title'], 90)}." + ("" if _PLACEHOLDER.search(d["summary"]) else f" {d['summary']}"), d["evidence"], d["role"]))
     for a in profile["improvements"]:
         sts.append(Statement(f"Recurring feedback, {a['count']} instances: {a['label']}.", a["item_ids"][:8]))
     conf = set(profile.get("confidential", []))
@@ -67,24 +102,50 @@ def build_statements(profile: dict[str, Any], by_id: dict[str, Item], kind: str,
     return sts
 
 
+def _first_person_win(it: Item) -> str:
+    keys = [k for k in it.keys if k][:2]
+    return f"I shipped {short(it.title, 80)}" + (f" ({', '.join(keys)})" if keys else "")
+
+
+_VERB = {"problem_solved": "I debugged and fixed a problem", "help_given": "I helped a teammate", "mentoring": "I mentored a teammate", "decision": "I drove a technical choice"}
+
+
 def one_on_one(profile: dict[str, Any], by_id: dict[str, Item], sts: list[Statement]) -> list[dict[str, Any]]:
-    wins = [s for s in sts if s.text and not s.text.startswith(("Not in any ticket", "Decision", "Recurring"))][:4]
-    unseen = [s for s in sts if s.text.startswith(("Not in any ticket", f"{FLAG} Not in any ticket"))][:4]
-    decs = [s for s in sts if "Decision (" in s.text][:3]
-    imp = [s for s in sts if s.text.startswith("Recurring")][:2]
-    gaps = [g for g in profile["gaps"] if g["status"] != "backed" and g["level"] == "next"]
+    """First-person talking points. Every bullet ends with a link. Wins are shipped PRs (initial/trivial commits excluded)."""
     mine = [i for i in by_id.values() if i.meta.get("mine")]
-    blockers = [f"Open PR, not merged yet: {i.title[:80]} ({i.url or i.id})" for i in sorted(mine, key=lambda x: x.date)
-                if i.type == "pr" and i.meta.get("state") == "open" and not i.meta.get("is_revert")][:4]
-    blockers += [f"Ticket reopened {i.meta.get('reopen_count')}x: {i.title[:80]} ({i.url or i.id})" for i in sorted(mine, key=lambda x: x.date)
-                 if i.type == "ticket" and i.meta.get("reopen_count", 0) > 0][:3]
-    out = [
-        {"heading": "Wins", "bullets": [f"{s.text} [{_cite(s.evidence, by_id, 1)}]" for s in wins]},
-        {"heading": "You may not have seen", "bullets": [f"{s.text} [{_cite(s.evidence, by_id, 1)}]" for s in unseen]},
-        {"heading": "Blockers", "bullets": blockers},
-        {"heading": "Decisions needing input", "bullets": [f"{s.text} [{_cite(s.evidence, by_id, 1)}]" for s in decs]},
-        {"heading": "Working on", "bullets": [f"{s.text} [{_cite(s.evidence, by_id, 2)}]" for s in imp]},
-    ]
+    prs = [i for i in mine if i.type == "pr" and shipped(i) and not _TRIVIAL.search(i.title)]
+    prs.sort(key=lambda i: (-(int((i.meta.get("size") or {}).get("lines", 0)) > 0), -len(i.keys), i.date), reverse=False)
+    prs = sorted(prs, key=lambda i: (-len(i.keys), i.date))[:4]
+    wins = [f"{_first_person_win(i)} ({i.url or i.id})" for i in prs]
+    if not wins:  # no shipped PRs: finished tickets, still real work
+        done = [i for i in mine if i.type == "ticket" and str(i.meta.get("status", "")).lower() in {"done", "closed", "resolved"}][:3]
+        wins = [f"I closed {short(i.title, 80)} ({i.url or i.id})" for i in done]
+    unseen = []
+    for v in profile["invisible"][:5]:
+        it = by_id.get(v["evidence"][0]) if v["evidence"] else None
+        if not it:
+            continue
+        where = f" in #{it.meta.get('channel')}" if it.meta.get("channel") else ""
+        co = [p for p in v.get("co_contributors", []) if not _SLACK_ID.fullmatch(p)][:2]
+        summ = re.sub(r"\s+", " ", v["summary"]).strip()
+        unseen.append(f"{_VERB.get(v['label'], 'I helped')}{where} on {it.date[:10]}{' with ' + ', '.join(co) if co else ''}: {summ[:200]}. No ticket was raised. ({it.url or it.id})")
+    decs = []
+    for d in profile["decisions"][:3]:
+        it = by_id.get(d["evidence"][0])
+        role = "I led" if d["role"] == "led" else "I contributed to"
+        decs.append(f"{role} {short(d['title'], 80)}; I'd like a call on whether we take it forward. ({(it.url if it else '') or d['evidence'][0]})")
+    blockers = [f"Ticket reopened {i.meta.get('reopen_count')}x: {short(i.title, 80)} ({i.url or i.id})" for i in sorted(mine, key=lambda x: x.date)
+                if i.type == "ticket" and i.meta.get("reopen_count", 0) > 0][:3]
+    working = [f"{short(i.title, 80)}, PR still open ({i.url or i.id})" for i in sorted(mine, key=lambda x: x.date)
+               if i.type == "pr" and i.meta.get("state") == "open" and not i.meta.get("is_revert")][:3]
+    working += [f"{short(i.title, 80)}, ticket in progress ({i.url or i.id})" for i in sorted(mine, key=lambda x: x.date)
+                if i.type == "ticket" and str(i.meta.get("status", "")).lower() in {"in progress", "in review", "in development"}][:3]
+    for a in profile["improvements"][:2]:
+        first = by_id.get(a["item_ids"][0]) if a["item_ids"] else None
+        working.append(f"Recurring review feedback, {a['count']} instances: {a['label']}. ({(first.url if first else '') or a['item_ids'][0]})")
+    gaps = [g for g in profile["gaps"] if g["status"] != "backed" and g["level"] == "next"]
+    out = [{"heading": "Wins", "bullets": wins}, {"heading": "You may not have seen", "bullets": unseen}, {"heading": "Blockers", "bullets": blockers},
+           {"heading": "Decisions needing input", "bullets": decs}, {"heading": "Working on", "bullets": working}]
     if gaps:
         out.append({"heading": "For the next level", "bullets": [f"{g['expectation']}: {'no evidence yet' if g['status']=='missing' else str(len(g['evidence']))+' item(s), thin'}" for g in gaps[:4]]})
     return [s for s in out if s["bullets"]]
@@ -123,7 +184,7 @@ def stories(profile: dict[str, Any], by_id: dict[str, Item], terms: set[str], ke
         if v["label"] in {"mentoring", "help_given"}:
             pool.append(("Helping a teammate", v["summary"], v["evidence"], "Tell me about a time you helped someone unblock."))
     for p in sorted(profile["projects"], key=lambda p: -len(p["evidence"]))[:3]:
-        pool.append((f"Delivering {p['name']}", f"{p['outcome']}; goal: {p['goal']}", p["evidence"][:6], "Tell me about a project you delivered end to end."))
+        pool.append((f"Delivering {p['name']}", "; ".join(x for x in (p["outcome"], "" if _PLACEHOLDER.search(p["goal"]) else f"goal: {p['goal']}") if x and not _PLACEHOLDER.search(x)), p["evidence"][:6], "Tell me about a project you delivered end to end."))
     out, seen, per_title = [], set(), {}
     for title, body, ev, q in pool:
         if body in seen or per_title.get(title, 0) >= 2:
@@ -186,6 +247,7 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
     corpus = {"title": title, "summary": f"**{s['prs_shipped']} PRs shipped**, {s['reviews_given']} reviews, {len(profile['invisible'])} pieces of invisible work, {len(profile['decisions'])} decisions. Every statement links to an item in the ledger.",
               "sections": sections, "sources": sources_for(items)}
     corpus["sections"][0:0] = [{"heading": "Key numbers", "facts": facts}] if kind in {"backfill", "profile"} else []
+    corpus = _clean_obj(corpus)
     # ledger must stay the first TABLE (CSV export reads the first table); key numbers have no table
     result = {"title": title, "mode": kind, "stats": s, "projects": len(profile["projects"]), "invisible_work": len(profile["invisible"]),
               "decisions": len(profile["decisions"]), "improvement_areas": [a["label"] for a in profile["improvements"]],
