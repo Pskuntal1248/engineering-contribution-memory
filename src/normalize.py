@@ -198,11 +198,12 @@ def normalize_commit(raw: dict[str, Any], repo: str, username: str, projects: It
     files = raw.get("files")
     size = pr_size(files, (raw.get("stats") or {}).get("additions", 0), (raw.get("stats") or {}).get("deletions", 0))
     first = msg.splitlines()[0] if msg else ""
+    paths = [f.get("filename", "") for f in (files or []) if isinstance(f, dict) and f.get("filename") and not is_excluded_file(f.get("filename", ""))][:15]
     mine = author.lower() == username.lower() or any(username.lower() in x.lower() for x in co)
     return Item(
         id=iid, source="github", type="commit", date=when, title=first[:200], url=raw.get("html_url", ""),
         text=msg[:2000], author=author, co_authors=co, keys=ticket_keys(msg, projects=projects),
-        meta={"repo": repo, "sha": sha, "size": size, "mine": mine, "is_revert": first.lower().startswith("revert")},
+        meta={"repo": repo, "sha": sha, "size": size, "mine": mine, "paths": paths, "is_revert": first.lower().startswith("revert")},
     )
 
 
