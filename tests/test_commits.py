@@ -146,3 +146,51 @@ def test_weekly_summary_lists_shipped_commits_in_window():
     sec = {s["heading"]: s for s in out["corpus"]["sections"]}
     assert "Shipped" in sec and any("Bump deps" in b for b in sec["Shipped"]["bullets"])
     assert not any("Add retry" in b for b in sec["Shipped"]["bullets"])  # reverted, not counted
+
+
+MSGS = ["Add HTTP client retry logic", "Fix retry backoff bug in client", "Add timeout option to client", "Update README with client usage", "Add README badges and install docs",
+        "Fix typo in readme", "Add session cookie handling", "Fix cookie jar expiry", "Add unit tests for client retry", "Add tests for timeout", "Initial commit", "Set up CI workflow", "Fix CI python version"]
+PATHS = {"retry": "client/retry.py", "backoff": "client/retry.py", "timeout": "client/timeouts.py", "readme": "README.md", "cookie": "client/cookies.py", "CI": ".github/workflows/ci.yml", "HTTP": "client/core.py"}
+
+
+def commit_only_call(calls):
+    import hashlib
+
+    rows = [commit(hashlib.sha1(m.encode()).hexdigest(), m, date=f"2026-0{1 + k // 5}-{10 + k:02d}T10:00:00Z") for k, m in enumerate(MSGS)]
+
+    async def call(name, args):
+        calls.append(name)
+        if name == "github.list_commits":
+            return rows
+        if name == "github.get_commit":
+            m = next(r["commit"]["message"] for r in rows if r["sha"] == args["ref"])
+            fs = [v for k, v in PATHS.items() if k.lower() in m.lower()][:2] or ["client/core.py"]
+            return {"files": [{"filename": f, "additions": 5, "deletions": 1} for f in fs]}
+        return {"items": []}
+    return call
+
+
+def commit_only_run(inputs, memory, calls):
+    has = {"github.list_commits", "github.get_commit", "github.search_issues"}
+    call = commit_only_call(calls)
+    deps = agent.Deps(lambda cfg: GatewaySource(call, cfg.username, cfg.repos, [], False, [], has), llm=None, now=lambda: NOW)
+    return asyncio.run(agent.make_graph(deps).ainvoke({"inputs": inputs, "memory": memory}))
+
+
+def test_commit_only_repo_is_grouped_into_projects_without_inflated_roles():
+    out = run_commits = commit_only_run(INP, {}, [])
+    projects = out["result"]["projects"] if "projects" in out["result"] else None
+    assert projects, out["result"]
+    grouped = sum(1 for r in ledger(out).values() if r[2] not in ("(unlinked)", "(other work)"))
+    assert grouped >= 10  # of 13 commits
+    roles = {p["role"] for p in out["ctx"]["prof"]["projects"]}
+    assert "led" not in roles
+
+
+def test_auto_is_backfill_until_a_backfill_completed():
+    old_empty = {"items": [], "last_run": "2026-10-10", "cursors": {}, "seen": []}  # saved by an earlier run that never was a backfill
+    calls = []
+    out = commit_only_run(INP, old_empty, calls)
+    assert out["result"]["mode"] == "backfill" and out["memory"]
+    again = commit_only_run(INP, out["memory"], [])
+    assert again["result"]["mode"] == "weekly"
