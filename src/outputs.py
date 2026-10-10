@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 import ledger
-from guards import FLAG, Statement, drop_colleague_assessments, flag_confidential, internal_terms, keep_cited, predicts_promotion, scrub
+from guards import FLAG, TRIVIAL_TITLE, Statement, drop_colleague_assessments, flag_confidential, internal_terms, keep_cited, predicts_promotion, scrub
 from metrics import shipped
 from models import Item
 
@@ -14,7 +14,7 @@ LEDGER_CAP = 6000
 
 
 _SLACK_ID = re.compile(r"\b[UW](?=[A-Z0-9]*\d)[A-Z0-9]{8,11}\b")
-_TRIVIAL = re.compile(r"^\s*(initial commit|first commit|init(ial(ize|ise)?)?\b|repository init|repo init|bootstrap|scaffold|add (readme|license|gitignore)|update readme|chore: ?init)", re.I)
+_TRIVIAL = TRIVIAL_TITLE
 _PLACEHOLDER = re.compile(r"\bnot stated\b|model summary needed|\(unlinked\)", re.I)
 
 
@@ -29,6 +29,13 @@ def short(title: str, n: int = 70) -> str:
     return cut.rstrip(" ,;:-") + "..."
 
 
+def no_placeholders(text: str) -> str:
+    """Drop clauses where the model or rules said a thing is not stated; fix the stray punctuation that leaves."""
+    t = re.sub(r"[;,]?\s*[^.;]*\b(?:not stated|model summary needed)\b[^.;]*", "", text, flags=re.I)
+    t = re.sub(r"\.{2,}", ".", t)
+    return re.sub(r"\s+([.;,])", r"\1", t).strip()
+
+
 def no_ids(text: str) -> str:
     """Raw Slack user IDs are never shown."""
     t = re.sub(r"\b(with|and|by|from)\s+" + _SLACK_ID.pattern + r"(?:,\s*" + _SLACK_ID.pattern + r")*", "", text)
@@ -38,11 +45,11 @@ def no_ids(text: str) -> str:
 
 def _clean_obj(x: Any) -> Any:
     if isinstance(x, str):
-        return no_ids(x)
+        return no_placeholders(no_ids(x))
     if isinstance(x, list):
         return [_clean_obj(v) for v in x]
     if isinstance(x, dict):
-        return {k: (v if k in {"url", "id"} else _clean_obj(v)) for k, v in x.items()}
+        return {k: (v if k in {"url", "id", "table"} else _clean_obj(v)) for k, v in x.items()}
     return x
 
 
@@ -145,7 +152,7 @@ def one_on_one(profile: dict[str, Any], by_id: dict[str, Item], sts: list[Statem
         working.append(f"Recurring review feedback, {a['count']} instances: {a['label']}. ({(first.url if first else '') or a['item_ids'][0]})")
     gaps = [g for g in profile["gaps"] if g["status"] != "backed" and g["level"] == "next"]
     out = [{"heading": "Wins", "bullets": wins}, {"heading": "You may not have seen", "bullets": unseen}, {"heading": "Blockers", "bullets": blockers},
-           {"heading": "Decisions needing input", "bullets": decs}, {"heading": "Working on", "bullets": working}]
+           {"heading": "Decision needing input", "bullets": decs}, {"heading": "Working on", "bullets": working}]
     if gaps:
         out.append({"heading": "For the next level", "bullets": [f"{g['expectation']}: {'no evidence yet' if g['status']=='missing' else str(len(g['evidence']))+' item(s), thin'}" for g in gaps[:4]]})
     return [s for s in out if s["bullets"]]
@@ -210,45 +217,50 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
     ledger_sec = {"heading": "Item ledger: every item, with source, date, project and type",
                   "body": f"{len(rows)} items" + (f" (newest {LEDGER_CAP} of {len(items)})" if trunc else "") + ". Reverts and reverted PRs are listed but not counted as shipped.",
                   "table": {"columns": ledger.COLUMNS, "rows": rows}}
-    facts = [{"label": "PRs shipped", "value": s["prs_shipped"], "source": "ledger"}, {"label": "PRs reverted (not counted)", "value": s["prs_reverted"], "source": "ledger"},
-             {"label": "Commits authored (outside merged PRs)", "value": s["commits_authored"], "source": "ledger"},
-             {"label": "Reviews given", "value": s["reviews_given"], "source": "ledger"}, {"label": "Tickets touched", "value": s["tickets_touched"], "source": "ledger"},
-             {"label": "Median PR cycle (hours)", "value": s["median_cycle_hours"] if s["median_cycle_hours"] is not None else "n/a", "source": "ledger"}]
-    sections: list[dict[str, Any]] = [ledger_sec]
+    sections: list[dict[str, Any]] = []
     sts = build_statements(profile, by_id, kind if kind not in {"backfill", "weekly"} else "profile", names, colleagues, date_from, date_to)
     if kind == "weekly_summary" or kind == "weekly":
         sections[0:0] = weekly_sections(profile, by_id, new_ids, quiet_line)
+
+    def sec(heading: str, bullets: list[str], none: str) -> dict[str, Any]:
+        return {"heading": heading, "bullets": bullets} if bullets else {"heading": heading, "body": none}
     if kind in {"backfill", "profile"}:
         sections += [
-            {"heading": "Projects", "bullets": [f"{p['name']} ({p['first']} to {p['last']}), role {p['role']}: {p['outcome']}. Evidence: {_cite(p['evidence'], by_id, 3)}" for p in profile["projects"]]},
-            {"heading": "Problems solved", "bullets": [f"{v['summary']} ({_cite(v['evidence'], by_id, 1)})" for v in profile["invisible"] if v["label"] == "problem_solved"]},
-            {"heading": "Technical decisions", "bullets": [f"{d['title']}, role {d['role']} ({_cite(d['evidence'], by_id, 1)})" for d in profile["decisions"]]},
-            {"heading": "Invisible work: no ticket or PR", "bullets": [f"{v['label'].replace('_',' ')}: {v['summary']} ({_cite(v['evidence'], by_id, 1)})" for v in profile["invisible"]]},
-            {"heading": "Skills with evidence", "bullets": [f"{k['skill']}: {k['count']} items, e.g. {_cite(k['evidence'], by_id, 2)}" for k in profile["skills"]]},
-            {"heading": "Improvement areas", "bullets": [f"{a['label']}: {a['count']} instances ({_cite(a['item_ids'], by_id, 3)})" for a in profile["improvements"]]},
+            sec("Projects", [f"{p['name']} ({p['first']} to {p['last']}), role {p['role']}: {p['outcome']}. Evidence: {_cite(p['evidence'], by_id, 3)}" for p in profile["projects"]],
+                "None found: no group of two or more linked PRs, tickets or docs yet."),
+            sec("Problems solved", [f"{v['summary']} ({_cite(v['evidence'], by_id, 1)})" for v in profile["invisible"] if v["label"] == "problem_solved"],
+                "None found: no debugging or fix thread with your part in it."),
+            sec("Decisions", [f"{d['title']}, role {d['role']} ({_cite(d['evidence'], by_id, 1)})" for d in profile["decisions"]],
+                "None found: no design doc, ADR or approach-chosen thread."),
+            sec("Invisible work", [f"{v['label'].replace('_',' ')}: {v['summary']} ({_cite(v['evidence'], by_id, 1)})" for v in profile["invisible"]],
+                "None found: no Slack thread with your work that lacks a ticket or PR."),
+            sec("Skills", [f"{k['skill']}: {k['count']} item(s), e.g. {_cite(k['evidence'], by_id, 2)}" for k in profile["skills"]],
+                "None found: not enough evidence text to map skills."),
+            sec("Improvement areas", [f"{a['label']}: {a['count']} instances ({_cite(a['item_ids'], by_id, 3)})" for a in profile["improvements"]],
+                "None found: no feedback pattern repeated 3 or more times."),
         ]
     if kind in {"backfill", "profile", "evidence_gaps"}:
         gaps = profile["gaps"]
-        if gaps:
-            sections.append({"heading": "Evidence gaps for the next level", "body": "What the evidence shows, not a prediction.",
-                             "table": {"columns": ["Expectation", "Level", "Status", "Evidence"], "rows": [[g["expectation"], g["level"], g["status"], _cite(g["evidence"], by_id, 3)] for g in gaps]}})
-        else:
-            sections.append({"heading": "Evidence gaps", "body": "No review framework was given. A framework would enable evidence gaps."})
+        sections.append(sec("Evidence gaps", [f"{g['expectation']} ({g['level']}): {g['status']}. {_cite(g['evidence'], by_id, 3) or 'no items'}" for g in gaps],
+                            "No review framework was given, so evidence gaps are skipped. A framework would enable them."))
     if kind == "one_on_one":
-        sections = one_on_one(profile, by_id, sts) + sections[:0] + [ledger_sec]
+        sections = one_on_one(profile, by_id, sts)
     if kind == "review_material":
         sections.insert(0, {"heading": f"Impact statements {date_from or 'all'} to {date_to or 'now'}", "bullets": [f"{s_.text} [{_cite(s_.evidence, by_id, 2)}]" for s_ in sts]})
     if kind == "interview_stories":
         st = stories(profile, by_id, terms, keep_internal)
         sections.insert(0, {"heading": "Interview stories", "sections": [{"heading": x["title"], "body": x["story"], "bullets": [f"Answers: {x['question']}", f"Evidence: {_cite(x['evidence'], by_id, 2)}"]} for x in st]})
-    if run_notes or failed:
-        sections.append({"heading": "What could not be done", "bullets": [*[f"{f['source']}: {f['error']}" for f in failed], *run_notes]})
+    short_notes = [f"{f['source']}: {f['error'][:140]}" for f in failed] + [n[:140] for n in run_notes if not n.startswith(("topic grouping used", "capped: notion: single"))]
+    if short_notes:
+        sections.append({"heading": "What could not be done", "bullets": short_notes[:6]})
     sections = [s_ for s_ in sections if s_.get("bullets") or s_.get("table") or s_.get("body") or s_.get("sections") or s_.get("facts")]
-    corpus = {"title": title, "summary": f"**{s['prs_shipped']} PRs shipped**, {s['reviews_given']} reviews, {len(profile['invisible'])} pieces of invisible work, {len(profile['decisions'])} decisions. Every statement links to an item in the ledger.",
+    # The platform's CSV export is the FIRST TABLE in the corpus, so the ledger is the only table and sits last (an appendix).
+    sections.append({"heading": "Appendix: item ledger (also the CSV download)",
+                     "body": f"{len(rows)} items" + (f" (newest {LEDGER_CAP} of {len(items)})" if trunc else "") + ". Reverts and reverted PRs are listed but not counted as shipped.",
+                     "table": {"columns": ledger.COLUMNS, "rows": rows}})
+    corpus = {"title": title, "summary": f"{s['prs_shipped']} PRs shipped, {s['reviews_given']} reviews, {len(profile['invisible'])} pieces of invisible work, {len(profile['decisions'])} decisions. Every item below links to its source.",
               "sections": sections, "sources": sources_for(items)}
-    corpus["sections"][0:0] = [{"heading": "Key numbers", "facts": facts}] if kind in {"backfill", "profile"} else []
     corpus = _clean_obj(corpus)
-    # ledger must stay the first TABLE (CSV export reads the first table); key numbers have no table
     result = {"title": title, "mode": kind, "stats": s, "projects": len(profile["projects"]), "invisible_work": len(profile["invisible"]),
               "decisions": len(profile["decisions"]), "improvement_areas": [a["label"] for a in profile["improvements"]],
               "evidence_gaps": [{"expectation": g["expectation"], "status": g["status"]} for g in profile["gaps"]],
