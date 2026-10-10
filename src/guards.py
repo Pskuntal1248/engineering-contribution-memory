@@ -81,7 +81,8 @@ def channels_to_read(all_channels: list[dict[str, Any]], chosen: list[str], incl
     for ch in all_channels:
         nm = str(ch.get("name", "")).lower()
         if is_dm_channel(ch):
-            if include_dms and (nm in names or "*dm*" in names or not names):
+            ids = {nm, str(ch.get("id", "")).lower(), str(ch.get("user", "")).lower()} - {""}
+            if include_dms and (ids & names or "*dm*" in names or not names):
                 picked.append(ch)
             elif log is not None:
                 log.add("skipped_channel", channel=ch.get("id"), reason="dm excluded")
@@ -89,6 +90,7 @@ def channels_to_read(all_channels: list[dict[str, Any]], chosen: list[str], incl
         if nm in names:
             picked.append(ch)
             found.add(nm)
+    found |= {str(c.get("id", "")).lower() for c in picked} | {str(c.get("user", "")).lower() for c in picked}
     return picked, sorted(names - found - {"*dm*"})
 
 
