@@ -550,7 +550,7 @@ def to_markdown(corpus: dict[str, Any], with_tables: bool = True, level: int = 2
     return "\n".join(lines)
 
 
-def write_local_copy(corpus: dict[str, Any], directory: str = ".gravity") -> None:
+def write_local_copy(corpus: dict[str, Any], directory: str = ".gravity", result: dict[str, Any] | None = None) -> None:
     """Local convenience only: lets `gravity run` output be read from disk. Never touches a source; failures are ignored."""
     try:
         import csv
@@ -558,6 +558,10 @@ def write_local_copy(corpus: dict[str, Any], directory: str = ".gravity") -> Non
         os.makedirs(directory, exist_ok=True)
         with open(os.path.join(directory, "last_output.md"), "w", encoding="utf-8") as f:
             f.write(to_markdown(corpus))
+        if result is not None:
+            import json as _json
+            with open(os.path.join(directory, "last_result.json"), "w", encoding="utf-8") as f:
+                _json.dump(result, f, default=str)
         first = next((s["table"] for s in corpus.get("sections", []) if s.get("table")), None)
         if first:
             with open(os.path.join(directory, "last_ledger.csv"), "w", encoding="utf-8", newline="") as f:
