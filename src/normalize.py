@@ -264,20 +264,23 @@ def normalize_ticket(raw: dict[str, Any], site: str, username_hints: Iterable[st
                     reopen += 1
             if it.get("field") == "Key" and it.get("fromString"):
                 key_aliases.append(it["fromString"])
-    desc = f.get("description") if isinstance(f.get("description"), str) else ""
+    from adapters import adf_text
+    desc = adf_text(f.get("description"))
     parent = f.get("parent") if isinstance(f.get("parent"), dict) else {}
     epic = parent.get("key") or (f.get("epic") or {}).get("key") if isinstance(f.get("epic"), dict) else parent.get("key")
     comments = [c for c in ((f.get("comment") or {}).get("comments") or [])]
     mine_comment = any(person(c.get("author")).lower() in hints for c in comments)
+    for old in raw.get("_aliases", []):  # the ticket was moved: its old key still resolves to this one
+        key_aliases.append(old)
     text = (desc or "")[:3000]
     return Item(
         id=f"jira:{key}", source="jira", type="ticket", date=iso(f.get("resolutiondate")) or updated or created,
         title=f"{key}: {f.get('summary', '')}", url=f"{site.rstrip('/')}/browse/{key}" if site else "", text=text,
-        author=reporter, keys=[key] + ([epic] if epic else []) + ticket_keys(desc), refs=urls_in(desc, *[c.get("body", "") for c in comments if isinstance(c.get("body"), str)]),
+        author=reporter, keys=[key] + ([epic] if epic else []) + ticket_keys(desc), refs=urls_in(desc, *[adf_text(c.get("body")) for c in comments]),
         meta={"project": key.split("-")[0], "status": (f.get("status") or {}).get("name", "") if isinstance(f.get("status"), dict) else str(f.get("status") or ""),
               "assignee": assignee, "reporter": reporter, "created": created, "reopen_count": reopen,
               "transitions": len(transitions), "aliases": key_aliases, "type_name": (f.get("issuetype") or {}).get("name", "") if isinstance(f.get("issuetype"), dict) else "",
-              "mine": assignee.lower() in hints or reporter.lower() in hints or mine_comment,
+              "mine": bool(raw.get("_mine")) or assignee.lower() in hints or reporter.lower() in hints or mine_comment,
               "confidential": bool(re.search(r"confidential", " ".join(str(l) for l in f.get("labels", [])), re.I))},
     )
 
@@ -323,7 +326,7 @@ def normalize_doc(raw: dict[str, Any], source: str, username_hints: Iterable[str
     hints = {h.lower() for h in username_hints if h}
     author = str(raw.get("author") or "")
     editors = [str(e) for e in raw.get("editors", [])]
-    mine = author.lower() in hints or any(e.lower() in hints for e in editors)
+    mine = bool(raw.get("_mine")) or author.lower() in hints or any(e.lower() in hints for e in editors)
     return Item(
         id=f"doc:{source}:{did}", source="doc", type="doc", date=iso(raw.get("modified") or raw.get("created")), title=title,
         url=raw.get("url", ""), text=body[:4000], author=author, keys=ticket_keys(title, body), refs=urls_in(body),
