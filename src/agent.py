@@ -19,6 +19,7 @@ from models import Item
 from pipeline import Config, ingest
 from sources import GatewaySource, Source
 from store import NativeMemoryStore, PlatformStore, ProfileStore, platform_store
+from ask import parse_request, parse_team_changes
 from weekly import new_items, next_cursors, quiet_week_line, since_for, id_key
 
 ON_DEMAND = {"weekly_summary", "one_on_one", "review_material", "interview_stories", "evidence_gaps"}
@@ -82,6 +83,12 @@ def make_graph(deps: Deps):
             store = PlatformStore(ps, mem) if ps is not None else NativeMemoryStore(mem, 256)
         prior = await store.aload() if hasattr(store, "aload") else store.load()
         req = str(inp.get("request") or "auto")
+        said, d1, d2 = parse_request(str(inp.get("ask") or ""), deps.now().date())
+        if said and req == "auto":
+            req = said  # the typed request wins over the dropdown's default
+        if d1 or d2:
+            inp["period_from"] = str(inp.get("period_from") or d1)
+            inp["period_to"] = str(inp.get("period_to") or d2)
         has_memory = bool(prior.get("items") or prior.get("last_run"))  # an empty but completed run still counts
         if req == "auto":
             req = "weekly" if prior.get("backfill_done") else "backfill"  # weekly only after a backfill really completed
@@ -137,7 +144,8 @@ def make_graph(deps: Deps):
         ctx["items"], ctx["new_ids"], ctx["failed"] = items, new_ids, failed
         prof = await eprofile.build(items, username=cfg.username, names=names, llm=deps.llm, budget=budget,
                                     framework=str(inp.get("review_framework", "") or ""), role_and_level=str(inp.get("role_and_level", "")),
-                                    prior=prior, repo_aliases=cfg.repo_aliases, embedder=deps.embedder)
+                                    prior=prior, repo_aliases=cfg.repo_aliases, embedder=deps.embedder,
+                                    team_changes=parse_team_changes(str(inp.get("team_changes", "") or "")))
         notes += prof["notes"]
         ctx["prof"], ctx["notes"], ctx["budget"] = prof, notes, budget
         return {"ctx": ctx}
@@ -163,6 +171,8 @@ def make_graph(deps: Deps):
         result["seconds"] = round(ctx["budget"].elapsed(), 1)
         result["new_items"] = len(ctx["new_ids"])
         result["dm_reads"] = len(ctx["log"].dm_reads())
+        result["page_preview"] = outputs.to_markdown(corpus, with_tables=False)[:5000]  # the text itself, without the long ledger table
+        outputs.write_local_copy(corpus)
         ctx["corpus"], ctx["result"] = corpus, result
         return {"ctx": ctx, "corpus": corpus, "result": result}
 
