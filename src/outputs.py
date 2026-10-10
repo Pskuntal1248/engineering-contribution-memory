@@ -19,6 +19,9 @@ _TRIVIAL = TRIVIAL_TITLE
 _PLACEHOLDER = re.compile(r"\bnot stated\b|model summary needed|\(unlinked\)", re.I)
 
 
+_DANGLING = {"a", "an", "the", "of", "to", "and", "or", "for", "with", "in", "on", "by", "at", "from", "how", "is", "are", "i", "we"}
+
+
 def short(title: str, n: int = 70) -> str:
     """A title for display: trailing [tags] dropped, cut at a word boundary, never mid-bracket."""
     t = re.sub(r"\s*\[[^\]]*\]\s*$", "", (title or "").strip()) or (title or "").strip()
@@ -27,7 +30,10 @@ def short(title: str, n: int = 70) -> str:
     cut = t[:n].rsplit(" ", 1)[0]
     if cut.count("[") > cut.count("]"):
         cut = cut[: cut.rfind("[")].rstrip()
-    return cut.rstrip(" ,;:-") + "..."
+    cut = cut.rstrip(" ,;:-")
+    while " " in cut and cut.rsplit(" ", 1)[1].lower() in _DANGLING:  # never end on "to", "the", "of"...
+        cut = cut.rsplit(" ", 1)[0].rstrip(" ,;:-")
+    return cut + "..."
 
 
 def no_placeholders(text: str) -> str:
@@ -235,8 +241,10 @@ def _drop_covered_commits(ids: list[str], by_id: dict[str, Item]) -> list[str]:
     return out
 
 
-def _ev(ids: list[str], by_id: dict[str, Item], n: int = 3) -> list[Item]:
+def _ev(ids: list[str], by_id: dict[str, Item], n: int = 3, keep_order: bool = False) -> list[Item]:
     ids = _drop_covered_commits(ids, by_id)
+    if keep_order:  # the caller already ranked them (skills: the pages the user wrote first)
+        return [by_id[i] for i in ids if i in by_id][:n]
     ids = sorted((i for i in ids if i in by_id), key=lambda i: (_PRI.get(by_id[i].type, 9), by_id[i].date, i))
     return [by_id[i] for i in ids[:n]]
 
@@ -269,7 +277,7 @@ def build_statements(profile: dict[str, Any], by_id: dict[str, Item], kind: str,
             sts.append(Statement(f"{_VERB.get(v['label'], 'I helped')} with no ticket raised: {v['summary']}", v["evidence"], "supported"))
     for d in profile["decisions"]:
         if within(d["evidence"]):
-            sts.append(Statement(f"Decision ({d['role']}): {short(d['title'], 90)}." + ("" if _PLACEHOLDER.search(d["summary"]) else f" {d['summary']}"), d["evidence"], d["role"]))
+            sts.append(Statement(f"Decision ({d['role']}): " + (short(d['title'], 90) + "." if _PLACEHOLDER.search(d["summary"]) else d["summary"]), d["evidence"], d["role"]))
     for a in profile["improvements"]:
         sts.append(Statement(f"Recurring feedback, {a['count']} instances: {a['label']}.", a["item_ids"][:8]))
     conf = set(profile.get("confidential", []))
@@ -388,7 +396,7 @@ def weekly_sections(profile: dict[str, Any], by_id: dict[str, Item], ids: set[st
 
     def from_window(labels: set[str]) -> list[str]:
         return [block(by_id[v["evidence"][0]].title, v["summary"], items=[by_id[v["evidence"][0]]]) for v in profile["invisible"] if v["label"] in labels and v["evidence"] and v["evidence"][0] in by_id and any(e in ids for e in v["evidence"])]
-    decs = [block(d["title"], f"My role: {d['role']}." + ("" if _PLACEHOLDER.search(d["summary"]) else f" {d['summary']}"), items=_ev(d["evidence"], by_id, 1)) for d in profile["decisions"] if any(e in ids for e in d["evidence"])]
+    decs = [block(short(d["title"], 90), f"My role: {d['role']}." + ("" if _PLACEHOLDER.search(d["summary"]) else f" {d['summary']}"), items=_ev(d["evidence"], by_id, 1)) for d in profile["decisions"] if any(e in ids for e in d["evidence"])]
     return [
         {"heading": "What changed this week", "body": f"{len(fresh)} item(s) {window_label or 'new since the last run'}."},
         {"heading": "Shipped", "body": "\n\n".join(shipped_blocks)} if shipped_blocks else {"heading": "Shipped", "body": "Nothing shipped this week."},
@@ -397,6 +405,14 @@ def weekly_sections(profile: dict[str, Any], by_id: dict[str, Item], ids: set[st
         blocks_sec("Problems solved", from_window({"problem_solved"}), "None this week."),
         blocks_sec("Help given", from_window({"help_given", "mentoring"}), "None this week."),
     ]
+
+
+def _empty_period(items: list[Item], date_from: str, date_to: str) -> str:
+    """Nothing in the asked period: say so, and say where the saved items actually are."""
+    ds = sorted(i.date[:10] for i in items if i.date)
+    if not ds or not (date_from or date_to):
+        return "None found in this period."
+    return f"None found in this period. The saved items are dated {ds[0]} to {ds[-1]}, so no project, thread or decision falls inside it."
 
 
 def stories(profile: dict[str, Any], by_id: dict[str, Item], terms: set[str], keep_internal: bool) -> list[dict[str, Any]]:
@@ -411,7 +427,7 @@ def stories(profile: dict[str, Any], by_id: dict[str, Item], terms: set[str], ke
         if v["label"] in {"mentoring", "help_given"}:
             pool.append(("Helping a teammate", v["summary"], v["evidence"], "Tell me about a time you helped someone unblock."))
     for p in sorted(profile["projects"], key=lambda p: -len(p["evidence"]))[:3]:
-        pool.append((f"Delivering {p['name']}", "; ".join(x for x in (p["outcome"], "" if _PLACEHOLDER.search(p["goal"]) else f"goal: {p['goal']}") if x and not _PLACEHOLDER.search(x)), p["evidence"][:6], "Tell me about a project you delivered end to end."))
+        pool.append((f"Delivering {p['name']}", "; ".join(x.rstrip(". ") for x in (p["outcome"], "" if _PLACEHOLDER.search(p["goal"]) else f"goal: {p['goal']}") if x and not _PLACEHOLDER.search(x)) + ".", p["evidence"][:6], "Tell me about a project you delivered end to end."))
     out, seen, per_title = [], set(), {}
     for title, body, ev, q in pool:
         if body in seen or per_title.get(title, 0) >= 2:
@@ -420,6 +436,9 @@ def stories(profile: dict[str, Any], by_id: dict[str, Item], terms: set[str], ke
         per_title[title] = per_title.get(title, 0) + 1
         conf = [e for e in ev if e in set(profile.get("confidential", []))]
         text = scrub(body, terms, keep_internal)
+        if per_title[title] > 1:  # a second story of the same kind is named by its subject, so no two headings read the same
+            subj = re.sub(r"\s*\[[^\]]*\]\s*$", "", by_id[ev[0]].title).strip() if ev and ev[0] in by_id else ""
+            title = f"{title}: {short(subj, 50)}" if subj else title
         out.append({"title": title, "story": ((FLAG + " ") if conf else "") + text, "question": q, "evidence": ev[:4]})
         if len(out) == 8:
             break
@@ -470,10 +489,10 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
                                           facts=_project_facts(p) + _thread_facts(p["evidence"], by_id, {x for v in profile["invisible"] for x in v["evidence"]}), items=_ev([e for e in p["evidence"] if e not in {x for d in profile["decisions"] for x in d["evidence"]} and by_id[e].type != "thread"], by_id, 14) + [by_id[e] for e in p["evidence"] if e in by_id and by_id[e].type == "thread" and e not in {x for v in profile["invisible"] for x in v["evidence"]}][:2]) for p in profile["projects"]],
                        "None found: no group of two or more linked PRs, tickets or docs yet."),
             blocks_sec("Problems solved", solved, "None found: no fix or debugging work with your part in it."),
-            blocks_sec("Decisions", [block(d["title"], f"My role: {d['role']}." + ("" if _PLACEHOLDER.search(d["summary"]) else f" {d['summary']}"), items=_ev(d["evidence"], by_id, 1)) for d in profile["decisions"]],
+            blocks_sec("Decisions", [block(short(d["title"], 90), f"My role: {d['role']}." + ("" if _PLACEHOLDER.search(d["summary"]) else f" {d['summary']}"), items=_ev(d["evidence"], by_id, 1)) for d in profile["decisions"]],
                        "None found: no design doc, ADR or approach-chosen thread."),
             blocks_sec("Invisible work", inv, "None found: no Slack thread with your work that lacks a ticket or PR."),
-            blocks_sec("Skills", [block(k["skill"], f"{k['count']} piece{'' if k['count'] == 1 else 's'} of work {'shows' if k['count'] == 1 else 'show'} this.", items=_ev(k["evidence"], by_id, 2), label="For example") for k in profile["skills"]],
+            blocks_sec("Skills", [block(k["skill"], f"{k['count']} piece{'' if k['count'] == 1 else 's'} of work {'shows' if k['count'] == 1 else 'show'} this.", items=_ev(k["evidence"], by_id, 2, keep_order=True), label="For example") for k in profile["skills"]],
                        "None found: not enough evidence text to map skills."),
             blocks_sec("Improvement areas", [block(a["label"], f"This came up {a['count']} times in review feedback.", items=_ev(a["item_ids"], by_id, 3)) for a in profile["improvements"]],
                        "None found: no feedback pattern repeated 3 or more times."),
@@ -496,7 +515,7 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
             (not date_from or by_id[e].date[:10] >= date_from) and (not date_to or by_id[e].date[:10] <= date_to) for e in p["evidence"] if e in by_id)]
         other = build_statements(profile, by_id, "review_material", names, colleagues, date_from, date_to, with_projects=False)
         sections.insert(0, {"heading": f"Impact statements {date_from or 'all'} to {date_to or 'now'}",
-                            "body": "\n\n".join(proj_ + [block(_st_title(s_, by_id), s_.text, items=_ev(s_.evidence, by_id, 2)) for s_ in other]) or "None found in this period."})
+                            "body": "\n\n".join(proj_ + [block(_st_title(s_, by_id), s_.text, items=_ev(s_.evidence, by_id, 2)) for s_ in other]) or _empty_period(items, date_from, date_to)})
     if kind == "interview_stories":
         st = stories(profile, by_id, terms, keep_internal)
         sections.insert(0, {"heading": "Interview stories", "sections": [{"heading": x["title"], "body": x["story"], "bullets": [f"Answers: {x['question']}"] + [f"Evidence: [{scrub(_lab(i), terms, keep_internal)}]({i.url})" if i.url else f"Evidence: {scrub(_lab(i), terms, keep_internal)}" for i in _ev(x["evidence"], by_id, 2)]} for x in st]})
