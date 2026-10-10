@@ -75,8 +75,27 @@ def key_aliases(items: list[Item]) -> dict[str, str]:
     return alias
 
 
+def blend(sparse: dict[str, dict[str, float]], dense: dict[str, list[float]] | None, weight: float = 0.5) -> dict[str, dict[str, float]]:
+    """Topic vector = sqrt(1-w) * keyword vector joined with sqrt(w) * embedding. Both parts are unit length, so the
+    cosine of two blended vectors is (1-w) * keyword cosine + w * embedding cosine, on the same scale as before.
+    Items with no embedding keep the keyword vector only."""
+    if not dense:
+        return sparse
+    a, b = math.sqrt(1 - weight), math.sqrt(weight)
+    out: dict[str, dict[str, float]] = {}
+    for iid, v in sparse.items():
+        e = dense.get(iid)
+        if e is None:
+            out[iid] = v
+            continue
+        m = {t: x * a for t, x in v.items()}
+        m.update({f"\x00e{i}": x * b for i, x in enumerate(e)})
+        out[iid] = m
+    return out
+
+
 def link(items: list[Item], repo_aliases: dict[str, str] | None = None, topic_threshold: float = 0.28,
-         window_days: int = 10, project_threshold: float = 0.22) -> dict[str, dict]:
+         window_days: int = 10, project_threshold: float = 0.22, dense: dict[str, list[float]] | None = None) -> dict[str, dict]:
     """Return {project_id: {"item_ids": [...], "links": {item_id: [reason,...]}}}.
     Project ids are the root item id, so they are stable between runs."""
     repo_aliases = repo_aliases or {}
@@ -138,7 +157,7 @@ def link(items: list[Item], repo_aliases: dict[str, str] | None = None, topic_th
         clusters[uf.find(i.id)].append(i.id)
 
     # 4. loose items (no strong link) attach to the best nearby cluster by topic. Never merges clusters.
-    vecs = tfidf_vectors(items)
+    vecs = blend(tfidf_vectors(items), dense)
     multi = {r: ids for r, ids in clusters.items() if len(ids) > 1}
     centroid: dict[str, dict[str, float]] = {}
     for r, ids in multi.items():
