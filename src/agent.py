@@ -184,7 +184,7 @@ def make_graph(deps: Deps):
         po = prof["project_of"]
         profile = {
             "items": [eprofile.compact(i, po.get(i.id, "")) for i in sorted(items, key=lambda x: (x.date, x.id))],
-            "seen": sorted(set(prior.get("seen", [])) | {id_key(i.id) for i in items}),
+            "seen": sorted(set(prior.get("seen", [])) | {id_key(i.id) for i in items} | {id_key(m) for i in items for m in i.meta.get("merged_ids", [])}),
             "cursors": next_cursors(prior.get("cursors", {}), [i for i in items if i.source]),
             "verdicts": prof["verdicts"], "last_run": deps.now().strftime("%Y-%m-%d"),
             "backfill_done": bool(prior.get("backfill_done")) or ctx["mode"] == "backfill",
