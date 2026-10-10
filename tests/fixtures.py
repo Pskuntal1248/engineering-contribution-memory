@@ -27,7 +27,7 @@ def _ts(d: datetime) -> str:
     return d.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def build(seed: int = 7) -> dict:
+def build(seed: int = 7, offset: int = 0) -> dict:
     r = random.Random(seed)
     ex: dict = {"projects": {}, "invisible": [], "decisions": [], "reverted_prs": [], "lockfile_pr": None, "missing_tests_prs": [],
                 "role_labels": {}, "week2_ids": [], "ladder": {}, "confidential_doc": None, "customers": CUSTOMERS}
@@ -35,8 +35,8 @@ def build(seed: int = 7) -> dict:
     jira: list[dict] = []
     slack = {"channels": [], "threads": []}
     docs: list[dict] = []
-    nxt_pr = {"acme/payments-api": 800, "acme/web": 300}
-    tkey = {"PAY": 400, "WEB": 100}
+    nxt_pr = {"acme/payments-api": 800 + offset, "acme/web": 300 + offset}
+    tkey = {"PAY": 400 + offset, "WEB": 100 + offset}
 
     def new_pr(proj, title, author, when, files, branch_key=None, body="", merged=True, state="closed", labels=()):
         repo = PROJECTS[proj]["repo"] if proj else "acme/payments-api"
