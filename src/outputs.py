@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 import ledger
-from guards import FLAG, TRIVIAL_TITLE, Statement, drop_colleague_assessments, flag_confidential, internal_terms, keep_cited, predicts_promotion, scrub
+from guards import FLAG, clip, TRIVIAL_TITLE, Statement, drop_colleague_assessments, flag_confidential, internal_terms, keep_cited, predicts_promotion, scrub
 from metrics import shipped
 from models import Item
 
@@ -80,21 +80,45 @@ def link_line(it: Item | None) -> str:
     return f"[{_lab(it)}]({it.url})" if it.url else _lab(it)
 
 
+def _group_links(items: list[Item]) -> list[str]:
+    """One line per piece of work: a PR and its Jira ticket (same key and title) share a line with both links."""
+    def norm(i: Item) -> str:
+        t = re.sub(r"^[A-Z][A-Z0-9]+-\d+[:\s-]*", "", i.title).strip().lower()
+        return (i.keys[0] if i.keys else "") + "|" + t
+    groups: dict[str, list[Item]] = {}
+    for i in items:
+        groups.setdefault(norm(i) if i.type in {"pr", "ticket"} else i.id, []).append(i)
+    names = {"pr": "PR", "ticket": "ticket", "commit": "commit", "doc": "doc", "thread": "Slack thread", "review": "review"}
+    out = []
+    for g in groups.values():
+        if len(g) == 1:
+            out.append(link_line(g[0]))
+            continue
+        lab = []
+        for i in g:
+            nm = names.get(i.type, i.type)
+            if i.type == "pr" and i.meta.get("number"):
+                nm = f"PR #{i.meta['number']}"
+            lab.append(f"[{nm}]({i.url})" if i.url else nm)
+        out.append(f"{_lab(g[0])}: " + ", ".join(lab))
+    return out
+
+
 def block(title: str, sentence: str = "", facts: list[str] | None = None, items: list[Item] | None = None, label: str = "Evidence") -> str:
-    """One readable item: bold title, one plain sentence, sub-bullets, then each link on its own line."""
-    lines = [f"**{title.strip()}**"]
+    """One readable item, as separate paragraphs (markdown folds single newlines): bold title, one plain sentence, sub-bullets, links."""
+    paras = [f"**{title.strip()}**"]
     if sentence:
-        lines.append(sentence.strip())
-    for f in facts or []:
-        lines.append(f"- {f}")
+        paras.append(sentence.strip())
+    if facts:
+        paras.append("\n".join(f"- {f}" for f in facts))
     its = [i for i in (items or []) if i]
     if its:
-        if len(its) == 1 and not facts:
-            lines.append(link_line(its[0]))
+        lines = _group_links(its)
+        if len(lines) == 1 and not facts:
+            paras.append(lines[0])
         else:
-            lines.append(f"- {label}:" if facts else f"{label}:")
-            lines += [f"  - {link_line(i)}" for i in its]
-    return "\n".join(lines)
+            paras.append(f"{label}:\n" + "\n".join(f"- {x}" for x in lines))
+    return "\n\n".join(paras)
 
 
 def blocks_sec(heading: str, blocks: list[str], none: str) -> dict[str, Any]:
@@ -298,7 +322,7 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
     if kind == "interview_stories":
         st = stories(profile, by_id, terms, keep_internal)
         sections.insert(0, {"heading": "Interview stories", "sections": [{"heading": x["title"], "body": x["story"], "bullets": [f"Answers: {x['question']}"] + [f"Evidence: {link_line(i)}" for i in _ev(x["evidence"], by_id, 2)]} for x in st]})
-    short_notes = [f"{f['source']}: {f['error'][:140]}" for f in failed] + [n[:140] for n in run_notes if not n.startswith(("topic grouping used", "capped: notion: single"))]
+    short_notes = [f"{f['source']}: {clip(f['error'], 260)}" for f in failed] + [clip(n, 260) for n in run_notes if not n.startswith(("topic grouping used", "capped: notion: single"))]
     if short_notes:
         sections.append({"heading": "What could not be done", "bullets": short_notes[:6]})
     sections = [s_ for s_ in sections if s_.get("bullets") or s_.get("table") or s_.get("body") or s_.get("sections") or s_.get("facts")]
