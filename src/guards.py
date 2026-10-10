@@ -263,3 +263,11 @@ def first_person(text: str) -> str:
     for rx, rep in _FP:
         out = re.sub(rx, rep, out, flags=re.I if rx.startswith(r"\bthe") else 0)
     return re.sub(r"(^|[.!?] )i ", lambda m: m.group(1) + "I ", out)
+
+
+def err_text(e: BaseException, n: int = 160) -> str:
+    """The real message of an error, looking inside ExceptionGroups ("unhandled errors in a TaskGroup")."""
+    subs = getattr(e, "exceptions", None)
+    if subs:
+        return "; ".join(dict.fromkeys(err_text(x, n) for x in subs))[:n]
+    return (str(e) or e.__class__.__name__)[:n]
