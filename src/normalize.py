@@ -300,10 +300,14 @@ def normalize_thread(channel: str, channel_id: str, messages: list[dict[str, Any
     mine = [m for m in msgs if m.get("user") in user_ids]
     if not mine:
         return Skipped(iid, "user did not take part")
+    first_mine = re.sub(r"\s+", " ", str(mine[0].get("text", ""))).strip()
+    title = " ".join(first_mine.split()[:8]).rstrip(" ,;:-.") or f"#{channel.lstrip('#')} thread"
     text = "\n".join(f"{m.get('user_name') or m.get('user')}: {m.get('text','')}" for m in msgs)[:4000]
-    url = root.get("permalink") or (f"{permalink_base}/archives/{channel_id}/p{ts.replace('.', '')}" if permalink_base else "")
+    # a real permalink when Slack gave one; else built from the workspace address; else Slack's own redirect, which opens the message
+    url = root.get("permalink") or (f"{permalink_base}/archives/{channel_id}/p{ts.replace('.', '')}" if permalink_base
+                                    else f"https://slack.com/app_redirect?channel={channel_id}&message_ts={ts}")
     return Item(
-        id=iid, source="slack", type="thread", date=iso(root.get("ts")), title=f"#{channel.lstrip('#')} thread", url=url, text=text,
+        id=iid, source="slack", type="thread", date=iso(root.get("ts")), title=title, url=url, text=text,
         author=str(root.get("user_name") or root.get("user") or ""), keys=ticket_keys(text), refs=urls_in(text),
         meta={"channel": channel.lstrip("#"), "channel_id": channel_id, "messages": len(msgs), "my_messages": len(mine),
               "participants": sorted({str(m.get("user_name") or m.get("user")) for m in msgs}), "mine": True,
@@ -322,6 +326,11 @@ def normalize_doc(raw: dict[str, Any], source: str, username_hints: Iterable[str
     title = raw.get("title") or ""
     body = raw.get("body") or raw.get("content") or ""
     labels = [str(x) for x in raw.get("labels", [])]
+    hint_names = {h.lower() for h in username_hints if h}
+    if not title.strip() or title.strip().lower().startswith("untitled"):
+        return Skipped(f"doc:{source}:{did}", "page has no title")
+    if not body.strip() and title.strip().lower() in hint_names:
+        return Skipped(f"doc:{source}:{did}", "profile page, not work")
     conf = bool(raw.get("confidential")) or bool(CONF_WORDS.search(title + " " + " ".join(labels) + " " + body[:600]))
     hints = {h.lower() for h in username_hints if h}
     author = str(raw.get("author") or "")
