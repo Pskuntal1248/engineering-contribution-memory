@@ -89,3 +89,41 @@ def test_confluence_pages_list_is_used_when_cql_and_identity_are_refused():
     asyncio.run(fetch_confluence(call, "2026-01-01T00:00:00Z", ToolLog(), out))
     assert len(out["docs"]) == 2 and not out["failed"], out
     assert out["docs"][0]["url"].startswith("https://x.atlassian.net/wiki/spaces/UTD")
+
+
+def test_generated_sample_pages_are_not_work_but_real_pages_are():
+    reasons = {}
+    for title, body in [("Template - How-to guide", "<p>Use this template to write a how-to guide for your team and share it widely</p>"),
+                        ("Template - Troubleshooting article", "<p>Describe the problem here and the steps to fix it for readers</p>"),
+                        ("Overview", "<p>Welcome to your space. Use this page to share an overview of what the team does.</p>"),
+                        ("Getting started in Confluence from Jira", "<p>Learn how to link your pages to Jira issues and more</p>"),
+                        ("UC10 Test Data", "<p>Welcome to the UC10 Test Data space! Edit this page to add a description.</p>"),
+                        ("Empty page", "")]:
+        r = N.normalize_doc({"id": title, "title": title, "body": body, "_mine": True, "modified": "2026-09-20T10:00:00Z"}, "confluence", [])
+        reasons[title] = isinstance(r, N.Skipped)
+    assert all(reasons.values()), reasons
+    ok = N.normalize_doc({"id": "1", "title": "Design: Search ranking approach [UC10 TEST DATA]", "body": "We chose a two stage ranking: recall then rerank, because latency matters.", "_mine": True, "modified": "2026-09-20T10:00:00Z"}, "confluence", [])
+    assert isinstance(ok, Item)
+
+
+def test_confidential_doc_is_flagged_beside_its_link_everywhere():
+    d = Item(id="d", source="doc", type="doc", date="2026-09-01", title="Confidential: Payout incident review", url="u", meta={"confidential": True})
+    assert "[CONFIDENTIAL source - check before sharing]" in O.link_line(d)
+    assert "[CONFIDENTIAL source - check before sharing]" in O._group_links([d])[0]
+
+
+def test_incident_review_doc_is_not_code_review_and_pr_body_is_not_debugging():
+    from analysis import map_skills
+    doc = Item(id="d", source="doc", type="doc", date="2026-09-01", title="Confidential: Payout incident review", text="Incident review of the payout failure. Root cause found.", meta={"mine": True})
+    pr = Item(id="p", source="github", type="pr", date="2026-09-01", title="Add payout reconciliation job", text="Needed debugging of the ledger mismatch", keys=["PAY-3"], meta={"mine": True})
+    names = {k["skill"]: k for k in map_skills([doc, pr])}
+    assert "code review" not in names
+    assert "debugging & incident response" not in names or "p" not in names["debugging & incident response"]["evidence"]
+
+
+def test_commits_covered_by_a_pr_are_hidden_from_evidence():
+    pr = Item(id="p", source="github", type="pr", date="2026-09-01", title="PAY-1 Add key", keys=["PAY-101", "PAY-1"], meta={})
+    c1 = Item(id="c1", source="github", type="commit", date="2026-09-01", title="PAY-101 add key", keys=["PAY-101"], meta={})
+    c2 = Item(id="c2", source="github", type="commit", date="2026-09-02", title="tidy docs", keys=[], meta={})
+    by = {i.id: i for i in (pr, c1, c2)}
+    assert O._drop_covered_commits(["p", "c1", "c2"], by) == ["p", "c2"]
