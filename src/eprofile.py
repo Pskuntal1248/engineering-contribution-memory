@@ -24,7 +24,7 @@ def outputs_id(n: str) -> bool:
 
 def compact(it: Item, project: str) -> dict[str, Any]:
     m = it.meta
-    keep = {k: m[k] for k in ("mine", "confidential", "repo", "number", "merged_flag", "reverted", "is_revert", "received", "reopen_count", "status", "channel", "merged_ids", "state", "my_messages", "cycle_hours", "participants", "paths") if k in m}
+    keep = {k: m[k] for k in ("mine", "confidential", "repo", "number", "merged_flag", "reverted", "is_revert", "received", "reopen_count", "status", "channel", "merged_ids", "state", "my_messages", "generated_only", "cycle_hours", "participants", "paths") if k in m}
     keep["size"] = (m.get("size") or {}).get("lines") if m.get("size") else None
     return {"id": it.id, "s": it.source, "t": it.type, "date": it.date, "title": it.title[:160], "url": it.url, "text": it.text[:TEXT_KEEP],
             "author": it.author, "co": it.co_authors[:4], "keys": it.keys[:5], "p": project, "m": keep}
@@ -34,6 +34,9 @@ def expand(row: dict[str, Any]) -> Item:
     m = dict(row.get("m", {}))
     if m.get("size") is not None:
         m["size"] = {"lines": m["size"], "excluded": 0, "files": 0, "basis": "stored"}
+    if row["t"] == "pr" and "generated_only" not in m:  # memory saved before the flag was stored: judge from the title
+        import normalize
+        m["generated_only"] = bool(normalize._LOCK_WORDS.search(row.get("title", "")))
     return Item(id=row["id"], source=row["s"], type=row["t"], date=row["date"], title=row["title"], url=row["url"], text=row["text"],
                 author=row.get("author", ""), co_authors=row.get("co", []), keys=row.get("keys", []), meta=m)
 
