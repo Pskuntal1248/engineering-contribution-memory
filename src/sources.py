@@ -4,6 +4,7 @@ comes from (real gateway tools, or fixtures in tests) is swappable.
 A source that fails or does not exist is named in `failed`, never silently empty."""
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any, Awaitable, Callable, Protocol
 
@@ -14,6 +15,7 @@ Call = Callable[[str, dict], Awaitable[Any]]  # call("github.list_pr_reviews", {
 MAX_PRS_PER_REPO = 600
 MAX_COMMITS_PER_REPO = 300
 MAX_COMMIT_LOOKUPS = 100
+PARALLEL = 6  # simultaneous gateway calls
 MAX_PR_FILE_LOOKUPS = 400  # file lists are one call per PR; bounded and reported
 
 
@@ -93,39 +95,70 @@ class GatewaySource:
         return out
 
     async def _github(self, out: dict, since: str, log: ToolLog) -> None:
-        looked = 0
         for repo in self.repos:
             try:
-                log.add("github.search_issues", repo=repo)
-                q = f"repo:{repo} is:pr author:{self.username} created:>={since[:10]}"
-                prs = _rows(await self.call("github.search_issues", {"q": q, "per_page": 100}), "items")
-                for p in prs[:MAX_PRS_PER_REPO]:
-                    num = p.get("number")
-                    p["_repo"] = repo
-                    owner, name = repo.split("/", 1)
-                    if looked < MAX_PR_FILE_LOOKUPS:
-                        looked += 1
-                        try:
-                            p["files"] = _rows(await self.call("github.list_pr_files", {"owner": owner, "repo": name, "pull_number": num}))
-                        except Exception:  # noqa: BLE001 - totals are used instead, flagged via size basis
-                            p["files"] = []
-                    else:
-                        out["capped"].append(f"pr files for {repo}: first {MAX_PR_FILE_LOOKUPS} PRs only")
-                    out["github"]["prs"].append(p)
-                    out["github"]["reviews"][f"{repo}#{num}"] = _rows(await self.call("github.list_pr_reviews", {"owner": owner, "repo": name, "pull_number": num}))
-                # PRs by others that the user reviewed
-                log.add("github.search_issues", repo=repo, reviewed_by=self.username)
-                rv = _rows(await self.call("github.search_issues", {"q": f"repo:{repo} is:pr reviewed-by:{self.username} -author:{self.username} created:>={since[:10]}", "per_page": 100}), "items")
-                for p in rv[:300]:
-                    p["_repo"] = repo
-                    out["github"]["prs"].append(p)
-                    owner, name = repo.split("/", 1)
-                    out["github"]["reviews"][f"{repo}#{p.get('number')}"] = _rows(await self.call("github.list_pr_reviews", {"owner": owner, "repo": name, "pull_number": p.get("number")}))
-                await self._commits(out, repo, since, log)
+                await self._github_repo(out, repo, since, log)
             except Exception as e:  # noqa: BLE001
                 out["failed"].append({"source": f"github:{repo}", "error": str(e)[:200]})
         if len(out["github"]["prs"]) >= MAX_PRS_PER_REPO * len(self.repos):
             out["capped"].append("github PRs hit the per-repo cap")
+
+    async def _github_repo(self, out: dict, repo: str, since: str, log: ToolLog) -> None:
+        owner, name = repo.split("/", 1)
+        sem = asyncio.Semaphore(PARALLEL)  # bounded fan-out: same calls as before, just not one after another
+
+        async def one(tool: str, args: dict) -> Any:
+            async with sem:
+                return await self.call(tool, args)
+
+        log.add("github.search_issues", repo=repo)
+        q = f"repo:{repo} is:pr author:{self.username} created:>={since[:10]}"
+        prs = _rows(await self.call("github.search_issues", {"q": q, "per_page": 100}), "items")[:MAX_PRS_PER_REPO]
+        log.add("github.search_issues", repo=repo, reviewed_by=self.username)
+        rv_q = f"repo:{repo} is:pr reviewed-by:{self.username} -author:{self.username} created:>={since[:10]}"
+        others = _rows(await self.call("github.search_issues", {"q": rv_q, "per_page": 100}), "items")[:300]
+        # Search results often lack merged_at. The PR list carries it, so one call per repo fills it in by number.
+        try:
+            log.add("github.list_pull_requests", repo=repo, state="closed")
+            listed = _rows(await self.call("github.list_pull_requests", {"owner": owner, "repo": name, "state": "closed", "per_page": 100}), "pull_requests")
+            by_num = {x.get("number"): x for x in listed}
+            for p in prs:
+                full = by_num.get(p.get("number"))
+                if full:
+                    for k in ("merged_at", "closed_at", "merge_commit_sha", "merged", "head", "additions", "deletions", "labels"):
+                        if full.get(k) not in (None, "", []) and not p.get(k):
+                            p[k] = full[k]
+        except Exception as e:  # noqa: BLE001 - merge state is then inferred from commits
+            out["failed"].append({"source": f"github-pr-list:{repo}", "error": str(e)[:200]})
+
+        async def files(p: dict, allowed: bool) -> None:
+            if not allowed:
+                return
+            try:
+                p["files"] = _rows(await one("github.list_pr_files", {"owner": owner, "repo": name, "pull_number": p.get("number")}))
+            except Exception:  # noqa: BLE001 - totals are used instead, flagged via size basis
+                p["files"] = []
+
+        async def reviews(p: dict) -> None:
+            key = f"{repo}#{p.get('number')}"
+            try:
+                out["github"]["reviews"][key] = _rows(await one("github.list_pr_reviews", {"owner": owner, "repo": name, "pull_number": p.get("number")}))
+            except Exception as e:  # noqa: BLE001
+                out["failed"].append({"source": f"github-reviews:{key}", "error": str(e)[:200]})
+
+        jobs = []
+        for n, p in enumerate(prs):
+            p["_repo"] = repo
+            jobs += [files(p, n < MAX_PR_FILE_LOOKUPS), reviews(p)]
+            out["github"]["prs"].append(p)
+        if len(prs) > MAX_PR_FILE_LOOKUPS:
+            out["capped"].append(f"pr files for {repo}: first {MAX_PR_FILE_LOOKUPS} PRs only")
+        for p in others:
+            p["_repo"] = repo
+            jobs.append(reviews(p))
+            out["github"]["prs"].append(p)
+        await asyncio.gather(*jobs)
+        await self._commits(out, repo, since, log)
 
     async def _commits(self, out: dict, repo: str, since: str, log: ToolLog) -> None:
         """Commits by the user, so repos without PRs still show work. Bots, merges and PR-covered commits are dropped in ingest."""
@@ -138,18 +171,24 @@ class GatewaySource:
             return
         if len(rows) >= MAX_COMMITS_PER_REPO:
             out["capped"].append(f"commits for {repo}: first {MAX_COMMITS_PER_REPO} only")
-        for n, c in enumerate(rows[:MAX_COMMITS_PER_REPO]):
+        sem = asyncio.Semaphore(PARALLEL)
+        picked = rows[:MAX_COMMITS_PER_REPO]
+
+        async def detail(n: int, c: dict) -> None:
             c["_repo"] = repo
             if n < MAX_COMMIT_LOOKUPS and not c.get("files"):  # list_commits has no file list; size needs one lookup per commit
                 try:
-                    full = await self.call("github.get_commit", {"owner": owner, "repo": name, "ref": c.get("sha", "")})
+                    async with sem:
+                        full = await self.call("github.get_commit", {"owner": owner, "repo": name, "ref": c.get("sha", "")})
                     if isinstance(full, dict):
                         c["files"], c["stats"] = full.get("files"), full.get("stats")
                 except Exception:  # noqa: BLE001 - size stays unknown, the commit is still listed
                     pass
-            elif n >= MAX_COMMIT_LOOKUPS and n == MAX_COMMIT_LOOKUPS:
-                out["capped"].append(f"commit sizes for {repo}: first {MAX_COMMIT_LOOKUPS} commits only")
-            out["github"]["commits"].append(c)
+
+        await asyncio.gather(*(detail(n, c) for n, c in enumerate(picked)))
+        if len(picked) > MAX_COMMIT_LOOKUPS:
+            out["capped"].append(f"commit sizes for {repo}: first {MAX_COMMIT_LOOKUPS} commits only")
+        out["github"]["commits"].extend(picked)
 
     async def _slack(self, out: dict, since: str, log: ToolLog) -> None:
         try:
