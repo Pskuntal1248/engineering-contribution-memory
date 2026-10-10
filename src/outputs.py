@@ -31,16 +31,16 @@ def short(title: str, n: int = 70) -> str:
 
 def no_placeholders(text: str) -> str:
     """Drop clauses where the model or rules said a thing is not stated; fix the stray punctuation that leaves."""
-    t = re.sub(r"[;,]?\s*[^.;]*\b(?:not stated|model summary needed)\b[^.;]*", "", text, flags=re.I)
+    t = re.sub(r"[;,]?[ \t]*[^.;\n]*\b(?:not stated|model summary needed)\b[^.;\n]*", "", text, flags=re.I)
     t = re.sub(r"\.{2,}", ".", t)
-    return re.sub(r"\s+([.;,])", r"\1", t).strip()
+    return re.sub(r"[ \t]+([.;,])", r"\1", t).strip()
 
 
 def no_ids(text: str) -> str:
     """Raw Slack user IDs are never shown."""
     t = re.sub(r"\b(with|and|by|from)\s+" + _SLACK_ID.pattern + r"(?:,\s*" + _SLACK_ID.pattern + r")*", "", text)
     t = _SLACK_ID.sub("a teammate", t)
-    return re.sub(r"\s{2,}", " ", t).replace(" .", ".").replace(" ;", ";")
+    return re.sub(r"(?<=\S)[ \t]{2,}", " ", t).replace(" .", ".").replace(" ;", ";")
 
 
 def _clean_obj(x: Any) -> Any:
@@ -68,6 +68,42 @@ def _cite(ids: list[str], by_id: dict[str, Item], n: int = 3) -> str:
         if it:
             out.append(f"{short(it.title, 60)} ({it.url or it.id})")
     return "; ".join(out)
+
+
+def _lab(it: Item) -> str:
+    return short(it.title, 60).replace("[", "(").replace("]", ")") or it.id
+
+
+def link_line(it: Item | None) -> str:
+    if not it:
+        return ""
+    return f"[{_lab(it)}]({it.url})" if it.url else _lab(it)
+
+
+def block(title: str, sentence: str = "", facts: list[str] | None = None, items: list[Item] | None = None, label: str = "Evidence") -> str:
+    """One readable item: bold title, one plain sentence, sub-bullets, then each link on its own line."""
+    lines = [f"**{title.strip()}**"]
+    if sentence:
+        lines.append(sentence.strip())
+    for f in facts or []:
+        lines.append(f"- {f}")
+    its = [i for i in (items or []) if i]
+    if its:
+        if len(its) == 1 and not facts:
+            lines.append(link_line(its[0]))
+        else:
+            lines.append(f"- {label}:" if facts else f"{label}:")
+            lines += [f"  - {link_line(i)}" for i in its]
+    return "\n".join(lines)
+
+
+def blocks_sec(heading: str, blocks: list[str], none: str) -> dict[str, Any]:
+    return {"heading": heading, "body": "\n\n".join(blocks)} if blocks else {"heading": heading, "body": none}
+
+
+def _ev(ids: list[str], by_id: dict[str, Item], n: int = 3) -> list[Item]:
+    ids = sorted((i for i in ids if i in by_id), key=lambda i: (_PRI.get(by_id[i].type, 9), by_id[i].date, i))
+    return [by_id[i] for i in ids[:n]]
 
 
 def sources_for(items: list[Item]) -> list[dict[str, str]]:
@@ -118,44 +154,41 @@ _VERB = {"problem_solved": "I debugged and fixed a problem", "help_given": "I he
 
 
 def one_on_one(profile: dict[str, Any], by_id: dict[str, Item], sts: list[Statement]) -> list[dict[str, Any]]:
-    """First-person talking points. Every bullet ends with a link. Wins are shipped PRs (initial/trivial commits excluded)."""
+    """First-person talking points. Each item: bold title, one plain sentence, its link on its own line."""
     mine = [i for i in by_id.values() if i.meta.get("mine")]
     prs = [i for i in mine if i.type == "pr" and shipped(i) and not _TRIVIAL.search(i.title)]
-    prs.sort(key=lambda i: (-(int((i.meta.get("size") or {}).get("lines", 0)) > 0), -len(i.keys), i.date), reverse=False)
     prs = sorted(prs, key=lambda i: (-len(i.keys), i.date))[:4]
-    wins = [f"{_first_person_win(i)} ({i.url or i.id})" for i in prs]
+    wins = [block(short(i.title, 80), f"I shipped this on {i.date[:10]}" + (f" ({', '.join(k for k in i.keys[:2] if k)})." if i.keys else "."), items=[i]) for i in prs]
     if not wins:  # no shipped PRs: finished tickets, still real work
         done = [i for i in mine if i.type == "ticket" and str(i.meta.get("status", "")).lower() in {"done", "closed", "resolved"}][:3]
-        wins = [f"I closed {short(i.title, 80)} ({i.url or i.id})" for i in done]
+        wins = [block(short(i.title, 80), "I closed this ticket.", items=[i]) for i in done]
     unseen = []
     for v in profile["invisible"][:5]:
         it = by_id.get(v["evidence"][0]) if v["evidence"] else None
         if not it:
             continue
         where = f" in #{it.meta.get('channel')}" if it.meta.get("channel") else ""
-        co = [p for p in v.get("co_contributors", []) if not _SLACK_ID.fullmatch(p)][:2]
         summ = re.sub(r"\s+", " ", v["summary"]).strip()
-        unseen.append(f"{_VERB.get(v['label'], 'I helped')}{where} on {it.date[:10]}{' with ' + ', '.join(co) if co else ''}: {summ[:200]}. No ticket was raised. ({it.url or it.id})")
+        unseen.append(block(it.title, f"{_VERB.get(v['label'], 'I helped')}{where} on {it.date[:10]}, with no ticket raised: {summ}", items=[it]))
     decs = []
     for d in profile["decisions"][:3]:
         it = by_id.get(d["evidence"][0])
         role = "I led" if d["role"] == "led" else "I contributed to"
-        decs.append(f"{role} {short(d['title'], 80)}; I'd like a call on whether we take it forward. ({(it.url if it else '') or d['evidence'][0]})")
-    blockers = [f"Ticket reopened {i.meta.get('reopen_count')}x: {short(i.title, 80)} ({i.url or i.id})" for i in sorted(mine, key=lambda x: x.date)
+        decs.append(block(short(d["title"], 80), f"{role} this and would like a call on whether we take it forward.", items=[it] if it else []))
+    blockers = [block(short(i.title, 80), f"This ticket was reopened {i.meta.get('reopen_count')} time(s).", items=[i]) for i in sorted(mine, key=lambda x: x.date)
                 if i.type == "ticket" and i.meta.get("reopen_count", 0) > 0][:3]
-    working = [f"{short(i.title, 80)}, PR still open ({i.url or i.id})" for i in sorted(mine, key=lambda x: x.date)
+    working = [block(short(i.title, 80), "My PR is still open.", items=[i]) for i in sorted(mine, key=lambda x: x.date)
                if i.type == "pr" and i.meta.get("state") == "open" and not i.meta.get("is_revert")][:3]
-    working += [f"{short(i.title, 80)}, ticket in progress ({i.url or i.id})" for i in sorted(mine, key=lambda x: x.date)
+    working += [block(short(i.title, 80), "This ticket is in progress.", items=[i]) for i in sorted(mine, key=lambda x: x.date)
                 if i.type == "ticket" and str(i.meta.get("status", "")).lower() in {"in progress", "in review", "in development"}][:3]
     for a in profile["improvements"][:2]:
-        first = by_id.get(a["item_ids"][0]) if a["item_ids"] else None
-        working.append(f"Recurring review feedback, {a['count']} instances: {a['label']}. ({(first.url if first else '') or a['item_ids'][0]})")
+        working.append(block(f"Review feedback: {a['label']}", f"I got this feedback {a['count']} times and am working on it.", items=_ev(a["item_ids"], by_id, 1)))
     gaps = [g for g in profile["gaps"] if g["status"] != "backed" and g["level"] == "next"]
-    out = [{"heading": "Wins", "bullets": wins}, {"heading": "You may not have seen", "bullets": unseen}, {"heading": "Blockers", "bullets": blockers},
-           {"heading": "Decision needing input", "bullets": decs}, {"heading": "Working on", "bullets": working}]
+    out = [{"heading": "Wins", "blocks": wins}, {"heading": "You may not have seen", "blocks": unseen}, {"heading": "Blockers", "blocks": blockers},
+           {"heading": "Decision needing input", "blocks": decs}, {"heading": "Working on", "blocks": working}]
     if gaps:
-        out.append({"heading": "For the next level", "bullets": [f"{g['expectation']}: {'no evidence yet' if g['status']=='missing' else str(len(g['evidence']))+' item(s), thin'}" for g in gaps[:4]]})
-    return [s for s in out if s["bullets"]]
+        out.append({"heading": "For the next level", "blocks": [block(g["expectation"], "No evidence yet." if g["status"] == "missing" else f"Only {len(g['evidence'])} item(s), thin.", items=_ev(g["evidence"], by_id, 2)) for g in gaps[:4]]})
+    return [{"heading": s["heading"], "body": "\n\n".join(s["blocks"])} for s in out if s["blocks"]]
 
 
 def weekly_sections(profile: dict[str, Any], by_id: dict[str, Item], ids: set[str], quiet_line: str | None) -> list[dict[str, Any]]:
@@ -165,17 +198,17 @@ def weekly_sections(profile: dict[str, Any], by_id: dict[str, Item], ids: set[st
     fresh = sorted((by_id[i] for i in ids if i in by_id and by_id[i].meta.get("mine", True)), key=lambda x: (x.date, x.id))
 
     def line(i: Item) -> str:
-        return f"{i.title[:90]} ({i.url or i.id})"
+        return block(short(i.title, 80), f"{i.type.upper() if i.type == 'pr' else i.type.capitalize()} on {i.date[:10]}.", items=[i])
     shipped_ = [i for i in fresh if (i.type == "pr" and shipped(i)) or (i.type == "commit" and not i.meta.get("is_revert") and not i.meta.get("reverted"))]
     prog = [i for i in fresh if i.type == "pr" and not shipped(i) and not i.meta.get("reverted") and not i.meta.get("is_revert") and i.meta.get("state") != "closed"]
     def from_window(labels: set[str]) -> list[str]:
-        return [f"{v['summary']} ({_cite(v['evidence'], by_id, 1)})" for v in profile["invisible"] if v["label"] in labels and any(e in ids for e in v["evidence"])]
+        return [block(by_id[v["evidence"][0]].title, v["summary"], items=[by_id[v["evidence"][0]]]) for v in profile["invisible"] if v["label"] in labels and v["evidence"] and v["evidence"][0] in by_id and any(e in ids for e in v["evidence"])]
     return [
-        {"heading": "What changed this week", "facts": [{"label": "New items", "value": len(fresh), "source": "ledger"}]},
-        {"heading": "Shipped", "bullets": [line(i) for i in shipped_[:25]]},
-        {"heading": "In progress", "bullets": [line(i) for i in prog[:15]]},
-        {"heading": "Problems solved", "bullets": from_window({"problem_solved"})},
-        {"heading": "Help given", "bullets": from_window({"help_given", "mentoring"})},
+        {"heading": "What changed this week", "body": f"{len(fresh)} new item(s) since the last run."},
+        blocks_sec("Shipped", [line(i) for i in shipped_[:25]], "Nothing shipped this week."),
+        blocks_sec("In progress", [line(i) for i in prog[:15]], "Nothing in progress."),
+        blocks_sec("Problems solved", from_window({"problem_solved"}), "None this week."),
+        blocks_sec("Help given", from_window({"help_given", "mentoring"}), "None this week."),
     ]
 
 
@@ -225,31 +258,46 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
     def sec(heading: str, bullets: list[str], none: str) -> dict[str, Any]:
         return {"heading": heading, "bullets": bullets} if bullets else {"heading": heading, "body": none}
     if kind in {"backfill", "profile"}:
+        mine_ = [i for i in items if i.meta.get("mine")]
+        fixes = [i for i in mine_ if i.type in {"pr", "ticket"} and re.search(r"\b(fix|fixes|fixed|bug|race|hotfix|mismatch|regression)\b", i.title, re.I)
+                 and (shipped(i) if i.type == "pr" else str(i.meta.get("status", "")).lower() in {"done", "closed", "resolved"})]
+        slack_fixes = [v for v in profile["invisible"] if v["label"] == "problem_solved"]
+        solved = [block(short(i.title, 80), f"I fixed this and it shipped on {i.date[:10]}.", items=[i]) for i in sorted(fixes, key=lambda x: x.date)[:8]]
+        solved += [block(by_id[v["evidence"][0]].title, f"I traced and fixed a problem on {by_id[v['evidence'][0]].date[:10]}, with no ticket raised: {v['summary']}", items=[by_id[v["evidence"][0]]])
+                   for v in slack_fixes if v["evidence"] and v["evidence"][0] in by_id]
+        pointer = {"problem_solved": "Listed under Problems solved."}
+        inv = []
+        for v in profile["invisible"]:
+            it = by_id.get(v["evidence"][0]) if v["evidence"] else None
+            if not it:
+                continue
+            what = {"mentoring": "I mentored a teammate", "help_given": "I helped a teammate", "problem_solved": "I fixed a problem"}.get(v["label"], "I helped")
+            inv.append(block(it.title, pointer.get(v["label"]) or f"{what} on {it.date[:10]}: {v['summary']}", items=[it]) if v["label"] != "problem_solved"
+                       else block(it.title, f"{what} on {it.date[:10]}. Details are under Problems solved.", items=[it]))
         sections += [
-            sec("Projects", [f"{p['name']} ({p['first']} to {p['last']}), role {p['role']}: {p['outcome']}. Evidence: {_cite(p['evidence'], by_id, 3)}" for p in profile["projects"]],
-                "None found: no group of two or more linked PRs, tickets or docs yet."),
-            sec("Problems solved", [f"{v['summary']} ({_cite(v['evidence'], by_id, 1)})" for v in profile["invisible"] if v["label"] == "problem_solved"],
-                "None found: no debugging or fix thread with your part in it."),
-            sec("Decisions", [f"{d['title']}, role {d['role']} ({_cite(d['evidence'], by_id, 1)})" for d in profile["decisions"]],
-                "None found: no design doc, ADR or approach-chosen thread."),
-            sec("Invisible work", [f"{v['label'].replace('_',' ')}: {v['summary']} ({_cite(v['evidence'], by_id, 1)})" for v in profile["invisible"]],
-                "None found: no Slack thread with your work that lacks a ticket or PR."),
-            sec("Skills", [f"{k['skill']}: {k['count']} item(s), e.g. {_cite(k['evidence'], by_id, 2)}" for k in profile["skills"]],
-                "None found: not enough evidence text to map skills."),
-            sec("Improvement areas", [f"{a['label']}: {a['count']} instances ({_cite(a['item_ids'], by_id, 3)})" for a in profile["improvements"]],
-                "None found: no feedback pattern repeated 3 or more times."),
+            blocks_sec("Projects", [block(f"{p['name']} ({p['first']} to {p['last']})", p["outcome"] if not _PLACEHOLDER.search(p["outcome"]) else "",
+                                          facts=[f"Role: {p['role']}"], items=_ev(p["evidence"], by_id, 4)) for p in profile["projects"]],
+                       "None found: no group of two or more linked PRs, tickets or docs yet."),
+            blocks_sec("Problems solved", solved, "None found: no fix or debugging work with your part in it."),
+            blocks_sec("Decisions", [block(d["title"], f"My role: {d['role']}." + ("" if _PLACEHOLDER.search(d["summary"]) else f" {d['summary']}"), items=_ev(d["evidence"], by_id, 1)) for d in profile["decisions"]],
+                       "None found: no design doc, ADR or approach-chosen thread."),
+            blocks_sec("Invisible work", inv, "None found: no Slack thread with your work that lacks a ticket or PR."),
+            blocks_sec("Skills", [block(k["skill"], f"{k['count']} item(s) show this.", items=_ev(k["evidence"], by_id, 2), label="For example") for k in profile["skills"]],
+                       "None found: not enough evidence text to map skills."),
+            blocks_sec("Improvement areas", [block(a["label"], f"This came up {a['count']} times in review feedback.", items=_ev(a["item_ids"], by_id, 3)) for a in profile["improvements"]],
+                       "None found: no feedback pattern repeated 3 or more times."),
         ]
     if kind in {"backfill", "profile", "evidence_gaps"}:
         gaps = profile["gaps"]
-        sections.append(sec("Evidence gaps", [f"{g['expectation']} ({g['level']}): {g['status']}. {_cite(g['evidence'], by_id, 3) or 'no items'}" for g in gaps],
+        sections.append(blocks_sec("Evidence gaps", [block(g["expectation"], f"Level: {g['level']}. Status: {g['status']}." + ("" if g["evidence"] else " No items found."), items=_ev(g["evidence"], by_id, 3)) for g in gaps],
                             "No review framework was given, so evidence gaps are skipped. A framework would enable them."))
     if kind == "one_on_one":
         sections = one_on_one(profile, by_id, sts)
     if kind == "review_material":
-        sections.insert(0, {"heading": f"Impact statements {date_from or 'all'} to {date_to or 'now'}", "bullets": [f"{s_.text} [{_cite(s_.evidence, by_id, 2)}]" for s_ in sts]})
+        sections.insert(0, {"heading": f"Impact statements {date_from or 'all'} to {date_to or 'now'}", "body": "\n\n".join(block(short(s_.text.split(":")[0], 70), s_.text, items=_ev(s_.evidence, by_id, 2)) for s_ in sts) or "None found in this period."})
     if kind == "interview_stories":
         st = stories(profile, by_id, terms, keep_internal)
-        sections.insert(0, {"heading": "Interview stories", "sections": [{"heading": x["title"], "body": x["story"], "bullets": [f"Answers: {x['question']}", f"Evidence: {_cite(x['evidence'], by_id, 2)}"]} for x in st]})
+        sections.insert(0, {"heading": "Interview stories", "sections": [{"heading": x["title"], "body": x["story"], "bullets": [f"Answers: {x['question']}"] + [f"Evidence: {link_line(i)}" for i in _ev(x["evidence"], by_id, 2)]} for x in st]})
     short_notes = [f"{f['source']}: {f['error'][:140]}" for f in failed] + [n[:140] for n in run_notes if not n.startswith(("topic grouping used", "capped: notion: single"))]
     if short_notes:
         sections.append({"heading": "What could not be done", "bullets": short_notes[:6]})
