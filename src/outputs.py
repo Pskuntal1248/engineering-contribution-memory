@@ -410,9 +410,9 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
         st = stories(profile, by_id, terms, keep_internal)
         sections.insert(0, {"heading": "Interview stories", "sections": [{"heading": x["title"], "body": x["story"], "bullets": [f"Answers: {x['question']}"] + [f"Evidence: [{scrub(_lab(i), terms, keep_internal)}]({i.url})" if i.url else f"Evidence: {scrub(_lab(i), terms, keep_internal)}" for i in _ev(x["evidence"], by_id, 2)]} for x in st]})
         sections.insert(1, {"heading": "Coverage", "body": f"{len(st)} stor{'y has' if len(st) == 1 else 'ies have'} evidence behind them. Stories for a disagreement are only included when a thread or PR discussion shows one; none is invented."})
-    short_notes = [f"{f['source']}: {clip(f['error'], 260)}" for f in failed] + [clip(n, 260) for n in run_notes if not n.startswith(("topic grouping used", "capped: notion: single"))]
+    short_notes = [f"{f['source']}: {clip(f["error"], 220)}" for f in failed] + [clip(n, 220) for n in run_notes if not n.startswith(("topic grouping used", "capped: notion: single"))]
     if short_notes:
-        sections.append({"heading": "What could not be done", "bullets": short_notes[:6]})
+        sections.append({"heading": "What could not be done", "bullets": short_notes[:4]})
     sections = [s_ for s_ in sections if s_.get("bullets") or s_.get("table") or s_.get("body") or s_.get("sections") or s_.get("facts")]
     # The platform's CSV export is the FIRST TABLE in the corpus, so the ledger is the only table and sits last (an appendix).
     sections.append({"heading": "Appendix: item ledger (also the CSV download)",
