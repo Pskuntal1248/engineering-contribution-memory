@@ -151,6 +151,7 @@ def normalize_pr(raw: dict[str, Any], repo: str, username: str, projects: Iterab
             "merged_flag": bool(merged), "state": raw.get("state", ""), "size": size, "branch": head,
             "cycle_hours": round((cd - cr).total_seconds() / 3600, 1) if cd and cr and merged else None,
             "is_revert": rev is not None, "reverts": rev, "labels": labels,
+            "generated_only": bool(raw.get("files")) and size["files"] == 0 and size["excluded"] > 0,  # lockfile / generated / vendored files only
             "paths": [f.get("filename", "") for f in (raw.get("files") or []) if isinstance(f, dict) and f.get("filename")][:15],
             "merged_basis": raw.get("_merged_basis", "merged_at" if merged else ""),
             "mine": author.lower() == username.lower() or username.lower() in [c.lower() for c in co],
