@@ -38,6 +38,7 @@ def pr_stats(items: list[Item]) -> dict[str, Any]:
     return {
         "prs_authored": len(mine),
         "prs_shipped": sum(1 for i in mine if shipped(i)),
+        "commits_authored": sum(1 for i in items if i.type == "commit" and i.meta.get("mine") and not i.meta.get("is_revert") and not i.meta.get("reverted")),
         "prs_reverted": sum(1 for i in mine if i.meta.get("reverted")),
         "median_cycle_hours": round(median(cyc), 1) if cyc else None,
         "reviews_given": sum(1 for i in items if i.type == "review" and i.meta.get("mine")),
