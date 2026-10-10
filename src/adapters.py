@@ -288,7 +288,7 @@ async def fetch_confluence_v2(call: Call, since: str, log: ToolLog, out: dict, f
             "created": str(h.get("createdAt") or ""), "modified": modified, "url": (base + web) if web.startswith("/") and base else web,
             "_mine": True, "kind": "confluence page"})
     out.setdefault("capped", []).append("confluence: read through the pages list (the CQL search was refused); only the 100 most recently edited pages were checked"
-                                        + ("; the connection did not name you, so the pages are those of the one author visible" if solo_note else ""))
+                                        + ("; Confluence authorship could not be confirmed (identity call refused), so pages with real content were kept" if solo_note else ""))
 
 
 async def fetch_confluence(call: Call, since: str, log: ToolLog, out: dict) -> None:
