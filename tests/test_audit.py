@@ -140,20 +140,29 @@ def _real(ts, text):
                 meta={"channel": "uc10-test", "channel_id": "G1", "messages": 1, "my_messages": 1, "participants": ["Parth Singh"], "mine": True})
 
 
-def test_flat_messages_at_the_users_real_timestamps_merge_per_topic():
+def test_flat_messages_with_the_users_real_texts_split_into_four_conversations():
     from pipeline import merge_threads
-    flat = [
-        _real("1791641890.36", "payouts for the 18 Sep batch don't match the ledger, the totals look off by a timezone offset, UTC vs IST"),
-        _real("1791641922.86", "The payout batch window used the wrong timezone, I will pass the merchant timezone to the window builder and add a regression test"),
-        _real("1791641933.69", "Fixed and reran the payout batch, totals now agree with settlement"),
-        _real("1791641945.33", "The retry worker null pointer comes from a retry payload missing merchant_id, log the payload and trace how the retry path rebuilds it"),
-        _real("1791641959.69", "Log the job payload and reproduce the retry worker null pointer locally with that payload"),
-        _real("1791641969.96", "The retry payload lacked merchant_id, trace how the retry path rebuilds it"),
-        _real("1791641991.63", "To run the payouts service locally use the sandbox gateway, I will add the steps to the README"),
+    texts = [
+        ("1791641890.36", "payouts for the 18 Sep batch don't match settlement totals, anyone seen this?"),
+        ("1791641910.75", "found it. The batch job builds its day window in UTC but settlement uses IST, so payouts after 6:30 PM IST fall into the next day."),
+        ("1791641922.86", "fix is to pass the merchant timezone into the window builder. I'll pair with Arjun on it and add a regression test."),
+        ("1791641933.69", "fixed and re-ran the batch, totals match now."),
+        ("1791641945.33", "I keep getting a null pointer in the retry worker, not sure how to debug it."),
+        ("1791641959.69", "add a log of the job payload before the call, then reproduce locally with that payload."),
+        ("1791641969.96", "the payload has no merchant_id when the job is retried. Walk through how the retry path rebuilds it."),
+        ("1791641980.10", "that was it, thanks! It's a good pattern to remember: log inputs first."),
+        ("1791641991.63", "how do we run the payouts service locally with the sandbox gateway?"),
+        ("1791642001.20", 'set GATEWAY_MODE=sandbox in .env and run the docker compose profile "payouts". I\'ll add this to the README.'),
+        ("1791642029.6", "PAY-1 idempotency keys are live in staging. AUTH-2 reopened after the rate limiter blocked health checks."),
+        ("1791642040.5", "I'll widen the allowlist for health checks and re-verify AUTH-2."),
     ]
+    flat = [_real(ts, tx) for ts, tx in texts]
+    for it in flat[-2:]:
+        it.keys = ["PAY-1", "AUTH-2"] if "PAY-1" in it.text else ["AUTH-2"]
     out = merge_threads(flat)
-    assert sorted(i.meta["my_messages"] for i in out) == [1, 3, 3], [i.meta["my_messages"] for i in out]
-    assert any(i.id.endswith("991.63") and i.meta["my_messages"] == 1 for i in out)  # the how-to stays its own item
+    assert sorted(i.meta["my_messages"] for i in out) == [2, 2, 4, 4], [(i.title, i.meta["my_messages"]) for i in out]
+    byid = {i.id.split(":")[-1]: i for i in out}
+    assert [byid[k].meta["my_messages"] for k in ("1791641890.36", "1791641945.33", "1791641991.63", "1791642029.6")] == [4, 4, 2, 2]
 
 
 def test_clip_never_cuts_mid_word_and_first_person():
