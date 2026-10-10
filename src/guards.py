@@ -270,6 +270,17 @@ def first_person(text: str) -> str:
     return re.sub(r"(^|[.!?] )i ", lambda m: m.group(1) + "I ", out)
 
 
+_IMPERATIVE = re.compile(r"^(?:Use|Run|Move|Adopt|Build|Add|Replace|Switch|Keep|Store|Migrate|Implement|Split|Introduce|Choose|Create|Remove|Drop|Make|Deploy|Route|Send|Write|Cache|Batch|Queue)\b")
+
+
+def decision_voice(text: str) -> str:
+    """One voice for every decision: 'We will ...' (a decision statement), whatever form the model or the rule produced."""
+    out = first_person(text or "").strip()
+    if _IMPERATIVE.match(out):
+        out = "We will " + out[0].lower() + out[1:]
+    return out
+
+
 def err_text(e: BaseException, n: int = 160) -> str:
     """The real message of an error, looking inside ExceptionGroups ("unhandled errors in a TaskGroup")."""
     subs = getattr(e, "exceptions", None)
