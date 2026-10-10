@@ -206,6 +206,25 @@ def normalize_commit(raw: dict[str, Any], repo: str, username: str, projects: It
     )
 
 
+_REVERTS_SHA = re.compile(r"this reverts commit ([0-9a-f]{7,40})", re.I)
+
+
+def mark_reverted_commits(commits: list[Item]) -> None:
+    """A commit that a later 'This reverts commit <sha>' points at is reverted: listed, not counted."""
+    by_sha = {c.meta.get("sha", ""): c for c in commits if c.type == "commit"}
+    for c in commits:
+        if c.type != "commit" or not c.meta.get("is_revert"):
+            continue
+        m = _REVERTS_SHA.search(c.text)
+        if not m:
+            continue
+        pre = m.group(1).lower()
+        for sha, target in by_sha.items():
+            if sha.lower().startswith(pre) and target is not c:
+                target.meta["reverted"] = True
+                target.meta["reverted_by"] = c.id
+
+
 # ------------------------------------------------------------------ Jira
 def normalize_ticket(raw: dict[str, Any], site: str, username_hints: Iterable[str]) -> Item | Skipped:
     key = raw.get("key")
