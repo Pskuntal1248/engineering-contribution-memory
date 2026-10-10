@@ -9,7 +9,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
 
-from guards import Budget, BudgetExceeded, Statement, cap_role, co_contributors, drop_colleague_assessments, keep_cited
+from guards import Budget, BudgetExceeded, Statement, cap_role, clip, co_contributors, first_person, drop_colleague_assessments, keep_cited
 from linking import tokens
 from metrics import shipped
 from models import Item
@@ -76,7 +76,7 @@ def baseline_thread(it: Item, display_names: set[str]) -> tuple[Label, str]:
     else:
         label = "none"
     first = re.sub(r"\s+", " ", t).strip()
-    return label, first[:220]
+    return label, clip(first, 220)
 
 
 def find_invisible(items: list[Item], links: dict[str, list[str]], display_names: set[str],
@@ -87,7 +87,7 @@ def find_invisible(items: list[Item], links: dict[str, list[str]], display_names
         if it.type != "thread" or not it.meta.get("mine") or has_strong_link(it, links):
             continue
         v = (verdicts or {}).get(it.id)
-        label, summary = (v.label, v.summary) if v else baseline_thread(it, display_names)
+        label, summary = (v.label, first_person(clip(v.summary, 220))) if v else baseline_thread(it, display_names)
         if label == "none":
             continue
         # a thread where the user only posted a short ack is not work
@@ -176,7 +176,7 @@ def find_decisions(items: list[Item], display_names: set[str], username: str,
             if not ok:
                 continue
         author_is_me = it.author in display_names or it.author.lower() == username.lower()
-        summary = v.summary if v is not None and v.is_decision and v.summary else re.sub(r"\s+", " ", it.text or it.title)[:220]
+        summary = first_person(clip(v.summary, 220)) if v is not None and v.is_decision and v.summary else clip(it.text or it.title, 220)
         out.append({"doc": it.id, "title": it.title, "role": "led" if author_is_me else "contributed", "evidence": [it.id],
                     "summary": summary, "confidential": bool(it.meta.get("confidential")),
                     "co_contributors": [] if author_is_me else [it.author]})
@@ -267,7 +267,7 @@ async def classify_threads_with_model(llm: LLM | None, budget: Budget, threads: 
         return verdicts, ["model not used for thread labels (baseline rules)"]
     sys = ("You label Slack threads for an engineer's work record. For each thread say whether the user solved a problem, "
            "took part in a decision, gave help or mentored, or none. Use ONLY the thread text. Never judge other people. "
-           "Copy thread_id exactly.")
+           "Write each summary in the first person as the engineer ('I traced...'), never 'the user'. Copy thread_id exactly.")
     sent = threads[: batch * max_batches]
     if len(threads) > len(sent):
         notes.append(f"{len(threads) - len(sent)} threads not sent to the model (call cap); labelled by rules")
@@ -296,7 +296,7 @@ async def project_cards_with_model(llm: LLM | None, budget: Budget, base: list[d
     if llm is None:
         return base, ["project names and goals from rules (model not used)"]
     sys = ("Name each project and state its goal and outcome using ONLY the evidence given. Say 'not stated' when unknown. "
-           "Role: led only if the user drove the work; reviewing is 'reviewed'. Copy ids exactly.")
+           "Role: led only if the user drove the work; reviewing is 'reviewed'. Write goal and outcome in the first person ('I built...'), complete sentences under 200 characters, never 'the user'. Copy ids exactly.")
     out = {b["project_id"]: dict(b) for b in base}
     for i in range(0, len(base), per_call):
         chunk = base[i : i + per_call]
@@ -311,5 +311,5 @@ async def project_cards_with_model(llm: LLM | None, budget: Budget, base: list[d
             if c.project_id not in out:
                 continue
             ev = [e for e in c.evidence if e in by_id] or out[c.project_id]["evidence"]
-            out[c.project_id].update(name=c.name[:80], goal=c.goal[:240], outcome=c.outcome[:240], role=cap_role(c.role, [by_id[e] for e in ev], username))
+            out[c.project_id].update(name=clip(c.name, 80), goal=first_person(clip(c.goal, 240)), outcome=first_person(clip(c.outcome, 240)), role=cap_role(c.role, [by_id[e] for e in ev], username))
     return list(out.values()), notes
