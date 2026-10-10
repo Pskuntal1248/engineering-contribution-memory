@@ -119,7 +119,7 @@ def test_slack_items_get_a_real_title_and_link_and_the_page_has_blocks_with_link
     assert "\n\n**" in md and "\n[" in md and "the user" not in md.lower()
     solved = next(s for s in corpus["sections"] if s["heading"] == "Problems solved")["body"]
     inv = next(s for s in corpus["sections"] if s["heading"] == "Invisible work")["body"]
-    assert "Details are under Problems solved" in inv and "Settlement totals" not in inv  # the same thread is not repeated verbatim
+    assert "listed once, under Problems solved" in inv and "Settlement totals" not in inv  # the same thread is not repeated verbatim
     assert "Settlement totals" in solved
 
 
@@ -148,7 +148,7 @@ def test_messages_folded_into_a_conversation_are_listed_as_not_counted():
         {"channel": "uc10-test", "channel_id": "G1", "messages": [msgs("1791641890.36", "the payout batch window timezone is wrong")]},
         {"channel": "uc10-test", "channel_id": "G1", "messages": [msgs("1791641922.86", "fixed the payout batch window timezone")]}]}}
     ing = ingest(raw, Config(username="u", repos=[], slack_channels=["uc10-test"]))
-    assert len([i for i in ing.items if i.type == "thread"]) == 1 and any("merged into the same conversation" in s.reason for s in ing.skipped)
+    assert len([i for i in ing.items if i.type == "thread"]) == 1 and any("folded into the same Slack conversation" in s.reason for s in ing.skipped)
 
 
 def test_review_material_is_situation_action_result_per_project_with_links():
@@ -186,3 +186,27 @@ def test_confluence_falls_back_to_the_pages_list_when_the_cql_search_is_refused_
     assert [d["id"] for d in out["docs"]] == ["11"] and out["docs"][0]["labels"] == ["confidential"] and not out["failed"]
     assert out["docs"][0]["url"] == "https://x.atlassian.net/wiki/spaces/UTD/pages/11"
     assert "connected but its permission scope does not match; reconnect with: gravity connect confluence" in explain("docs:confluence", '{"code":401,"message":"Unauthorized; scope does not match"}')
+
+
+def test_lockfile_only_pr_trivial_commits_unknown_keys_and_single_dates():
+    from adapters import rows as _r  # noqa: F401
+    import normalize as N
+    from metrics import shipped
+    from outputs import _drop_unknown_keys, _span
+    import ledger
+    raw = {"number": 8, "title": "Update dependencies", "user": {"login": ME}, "created_at": "2026-10-10T08:00:00Z", "merged_at": "2026-10-10T09:00:00Z",
+           "files": [{"filename": "poetry.lock", "additions": 4000, "deletions": 3}]}
+    it = N.normalize_pr(raw, R, ME)
+    assert not shipped(it) and ledger.counted_label(it).startswith("generated or lockfile")
+    for t in ("Initial commit", "Update README.md", "Update print statement from 'Hello' to 'Goodbye'"):
+        assert ledger.counted_label(commit("abc", t)).startswith("listed, not counted")
+    assert _drop_unknown_keys("Move webhooks to a queue. Related PAY-1, PAY-2, PAY-110.", {"PAY-1", "PAY-2"}) == "Move webhooks to a queue. Related PAY-1, PAY-2."
+    assert _span({"first": "2026-10-10", "last": "2026-10-10"}) == "2026-10-10"
+
+
+def test_skills_count_distinct_work_not_pr_plus_ticket_plus_commit():
+    from analysis import map_skills
+    items = [pr(1, "PAY-1", "Add idempotency key to payouts"), ticket("PAY-1", "Add idempotency key to payouts"), commit("c1", "PAY-1 idempotency key for payouts")]
+    items[2].keys = ["PAY-1"]
+    sk = {k["skill"]: k for k in map_skills(items)}
+    assert sk["payments & idempotency"]["count"] == 1
