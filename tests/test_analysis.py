@@ -44,7 +44,9 @@ def test_fixture_source_roundtrip(run):
 
 class FakeLLM:
     def __init__(self, fn): self.fn, self.n = fn, 0
-    async def structured(self, schema, system, payload):
+    async def structured(self, schema, system, payload, budget=None):
+        if budget is not None:
+            budget.spend()
         self.n += 1
         return self.fn(schema, payload)
 
