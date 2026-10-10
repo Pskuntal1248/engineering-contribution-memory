@@ -118,6 +118,12 @@ def _group_links(items: list[Item]) -> list[str]:
     return out
 
 
+def _same_title(title: str, it: Item) -> bool:
+    a = re.sub(r"[\s.\u2026]+$", "", re.sub(r"\.\.\.$", "", short(title, 90))).lower()
+    b = re.sub(r"[\s.\u2026]+$", "", re.sub(r"\.\.\.$", "", short(it.title, 90))).lower()
+    return bool(a) and (a == b or a.startswith(b) or b.startswith(a))
+
+
 def block(title: str, sentence: str = "", facts: list[str] | None = None, items: list[Item] | None = None, label: str = "Evidence") -> str:
     """One readable item, as separate paragraphs (markdown folds single newlines): bold title, one plain sentence, sub-bullets, links."""
     paras = [f"**{title.strip()}**"]
@@ -128,7 +134,10 @@ def block(title: str, sentence: str = "", facts: list[str] | None = None, items:
     its = [i for i in (items or []) if i]
     if its:
         lines = _group_links(its)[:10]
-        if len(lines) == 1 and not facts:
+        if len(its) == 1 and _same_title(title, its[0]):  # the heading already is the title: one source link, no repeated title
+            nm = {"pr": "PR", "ticket": "ticket", "commit": "commit", "doc": "doc", "thread": "Slack conversation", "review": "review"}.get(its[0].type, "source")
+            paras.append((f"[Source: {nm}]({its[0].url})" if its[0].url else f"Source: {nm}") + (f" {FLAG}" if its[0].meta.get("confidential") else ""))
+        elif len(lines) == 1 and not facts:
             paras.append(lines[0])
         else:
             paras.append(f"{label}:\n" + "\n".join(f"- {x}" for x in lines))
@@ -312,22 +321,44 @@ def one_on_one(profile: dict[str, Any], by_id: dict[str, Item], sts: list[Statem
     return [{"heading": s["heading"], "body": "\n\n".join(s["blocks"])} for s in out if s["blocks"]]
 
 
-def weekly_sections(profile: dict[str, Any], by_id: dict[str, Item], ids: set[str], quiet_line: str | None) -> list[dict[str, Any]]:
-    """Weekly summary: what shipped, what is in progress, problems solved, help given. Items from the window only; every line links."""
+def _window_work(profile: dict[str, Any], by_id: dict[str, Item], ids: set[str]) -> list[Item]:
+    """Work items in the window under the same rules as the profile: shipped PRs (no reverts, no lockfile-only), commits only when no PR or ticket covers them and they are not trivial."""
+    fresh = [by_id[i] for i in ids if i in by_id and by_id[i].meta.get("mine", True)]
+    prs = [i for i in fresh if i.type == "pr" and shipped(i)]
+    pk = {k for i in by_id.values() if i.type in {"pr", "ticket"} for k in i.keys}
+    commits = [i for i in fresh if i.type == "commit" and not i.meta.get("is_revert") and not i.meta.get("reverted") and not TRIVIAL_TITLE.search(i.title)
+               and not (set(i.keys) & pk)]
+    return sorted(prs + commits, key=lambda x: (x.date, x.id))
+
+
+def weekly_sections(profile: dict[str, Any], by_id: dict[str, Item], ids: set[str], quiet_line: str | None, window_label: str = "") -> list[dict[str, Any]]:
+    """Weekly summary: what shipped (grouped by project), what is in progress, decisions, problems solved, help given. Items from the window only; every line links."""
     if quiet_line or not ids:
         return [{"heading": "Nothing new this week", "body": quiet_line or "Nothing new this week."}]
     fresh = sorted((by_id[i] for i in ids if i in by_id and by_id[i].meta.get("mine", True)), key=lambda x: (x.date, x.id))
+    pof = profile.get("project_of", {})
+    pname = {p["project_id"]: p["name"] for p in profile["projects"]}
+    tickets = [i for i in by_id.values() if i.type == "ticket"]
 
-    def line(i: Item) -> str:
-        return block(short(i.title, 80), f"{i.type.upper() if i.type == 'pr' else i.type.capitalize()} on {i.date[:10]}.", items=[i])
-    shipped_ = [i for i in fresh if (i.type == "pr" and shipped(i)) or (i.type == "commit" and not i.meta.get("is_revert") and not i.meta.get("reverted"))]
-    prog = [i for i in fresh if i.type == "pr" and not shipped(i) and not i.meta.get("reverted") and not i.meta.get("is_revert") and i.meta.get("state") != "closed"]
+    def with_tickets(group: list[Item]) -> list[Item]:
+        keys = {k for i in group for k in i.keys}
+        return group + [t for t in tickets if (_title_key(t) in keys or set(t.keys) & keys) and t not in group]
+
+    work = _window_work(profile, by_id, ids)
+    by_proj: dict[str, list[Item]] = {}
+    for i in work:
+        by_proj.setdefault(pname.get(pof.get(i.id, ""), "Other work"), []).append(i)
+    shipped_blocks = ["**" + n + "**\n\n" + "\n".join(f"- {x}" for x in _group_links(with_tickets(g))[:15]) for n, g in sorted(by_proj.items(), key=lambda kv: (kv[0] == "Other work", kv[0]))]
+    prog = [i for i in fresh if i.type == "pr" and not shipped(i) and not i.meta.get("reverted") and not i.meta.get("is_revert") and not i.meta.get("generated_only") and i.meta.get("state") != "closed"]
+
     def from_window(labels: set[str]) -> list[str]:
         return [block(by_id[v["evidence"][0]].title, v["summary"], items=[by_id[v["evidence"][0]]]) for v in profile["invisible"] if v["label"] in labels and v["evidence"] and v["evidence"][0] in by_id and any(e in ids for e in v["evidence"])]
+    decs = [block(d["title"], f"My role: {d['role']}." + ("" if _PLACEHOLDER.search(d["summary"]) else f" {d['summary']}"), items=_ev(d["evidence"], by_id, 1)) for d in profile["decisions"] if any(e in ids for e in d["evidence"])]
     return [
-        {"heading": "What changed this week", "body": f"{len(fresh)} new item(s) since the last run."},
-        blocks_sec("Shipped", [line(i) for i in shipped_[:25]], "Nothing shipped this week."),
-        blocks_sec("In progress", [line(i) for i in prog[:15]], "Nothing in progress."),
+        {"heading": "What changed this week", "body": f"{len(fresh)} item(s) {window_label or 'new since the last run'}."},
+        {"heading": "Shipped", "body": "\n\n".join(shipped_blocks)} if shipped_blocks else {"heading": "Shipped", "body": "Nothing shipped this week."},
+        blocks_sec("In progress", ["\n".join(f"- {x}" for x in _group_links(with_tickets(prog))[:15])] if prog else [], "Nothing in progress."),
+        blocks_sec("Decisions", decs, "None this week."),
         blocks_sec("Problems solved", from_window({"problem_solved"}), "None this week."),
         blocks_sec("Help given", from_window({"help_given", "mentoring"}), "None this week."),
     ]
@@ -362,7 +393,7 @@ def stories(profile: dict[str, Any], by_id: dict[str, Item], terms: set[str], ke
 
 def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: str, terms: set[str], keep_internal: bool,
                colleagues: list[str], names: set[str], date_from: str, date_to: str, run_notes: list[str],
-               failed: list[dict], quiet_line: str | None, new_ids: set[str]) -> tuple[dict[str, Any], dict[str, Any]]:
+               failed: list[dict], quiet_line: str | None, new_ids: set[str], window_label: str = "") -> tuple[dict[str, Any], dict[str, Any]]:
     by_id = {i.id: i for i in items}
     known_keys = {k for i in items if i.type == "ticket" for k in i.keys}
     for d in profile["decisions"]:
@@ -370,7 +401,8 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
     for p_ in profile["projects"]:
         p_["goal"], p_["outcome"] = _drop_unknown_keys(p_["goal"], known_keys), _drop_unknown_keys(p_["outcome"], known_keys)
     s = profile["stats"]
-    rows, trunc = ledger.rows(items, profile["project_of"], LEDGER_CAP)
+    weekly_kind = kind in {"weekly", "weekly_summary"}
+    rows, trunc = ledger.rows([i for i in items if i.id in new_ids] if weekly_kind else items, profile["project_of"], LEDGER_CAP)  # weekly: only the new rows
     pname = {p["project_id"]: p["name"] for p in profile["projects"]}
     rows = [[r[0], r[1], pname.get(r[2], "(other work)" if r[2] != "(unlinked)" else r[2]), *r[3:]] for r in rows]
     ledger_sec = {"heading": "Item ledger: every item, with source, date, project and type",
@@ -379,7 +411,7 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
     sections: list[dict[str, Any]] = []
     sts = build_statements(profile, by_id, kind if kind not in {"backfill", "weekly"} else "profile", names, colleagues, date_from, date_to)
     if kind == "weekly_summary" or kind == "weekly":
-        sections[0:0] = weekly_sections(profile, by_id, new_ids, quiet_line)
+        sections[0:0] = weekly_sections(profile, by_id, new_ids, quiet_line, window_label)
 
     def sec(heading: str, bullets: list[str], none: str) -> dict[str, Any]:
         return {"heading": heading, "bullets": bullets} if bullets else {"heading": heading, "body": none}
@@ -440,10 +472,16 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
     sections = [s_ for s_ in sections if s_.get("bullets") or s_.get("table") or s_.get("body") or s_.get("sections") or s_.get("facts")]
     # The platform's CSV export is the FIRST TABLE in the corpus, so the ledger is the only table and sits last (an appendix).
     sections.append({"heading": "Appendix: item ledger (also the CSV download)",
-                     "body": f"{len(rows)} items: " + ", ".join(f"{n} {t}{'' if n == 1 else 's'}" for t, n in _type_counts(items)) + (f" (newest {LEDGER_CAP} of {len(items)})" if trunc else "")
+                     "body": f"{len(rows)} items: " + ", ".join(f"{n} {t}{'' if n == 1 else 's'}" for t, n in _type_counts([i for i in items if i.id in new_ids] if weekly_kind else items)) + (f" (newest {LEDGER_CAP} of {len(items)})" if trunc else "")
                      + ". A PR, its commits and its ticket are separate rows for the same change. Reverts, reverted PRs, lockfile-only PRs and trivial commits are listed but not counted.",
-                     "table": {"columns": ledger.COLUMNS, "rows": rows}})
-    corpus = {"title": title, "summary": f"{s['prs_shipped']} PR{'' if s['prs_shipped'] == 1 else 's'} shipped, {s['reviews_given']} review{'' if s['reviews_given'] == 1 else 's'}, {len(profile['invisible'])} piece{'' if len(profile['invisible']) == 1 else 's'} of invisible work{_inv_note(profile)}, {len(profile['decisions'])} decision{'' if len(profile['decisions']) == 1 else 's'}. Every item below links to its source.",
+                     **({"table": {"columns": ledger.COLUMNS, "rows": rows}} if rows else {})})
+    summary_text = f"{s['prs_shipped']} PR{'' if s['prs_shipped'] == 1 else 's'} shipped, {s['reviews_given']} review{'' if s['reviews_given'] == 1 else 's'}, {len(profile['invisible'])} piece{'' if len(profile['invisible']) == 1 else 's'} of invisible work{_inv_note(profile)}, {len(profile['decisions'])} decision{'' if len(profile['decisions']) == 1 else 's'}. Every item below links to its source."
+    if weekly_kind:
+        wp = sum(1 for i in _window_work(profile, by_id, new_ids) if i.type == "pr")
+        wi = sum(1 for v in profile["invisible"] if any(e in new_ids for e in v["evidence"]))
+        wd = sum(1 for d in profile["decisions"] if any(e in new_ids for e in d["evidence"]))
+        summary_text = f"{wp} PR{'' if wp == 1 else 's'} shipped, {wi} piece{'' if wi == 1 else 's'} of invisible work, {wd} decision{'' if wd == 1 else 's'} in this window. Every item below links to its source."
+    corpus = {"title": title, "summary": summary_text,
               "sections": sections, "sources": sources_for(items)}
     corpus = _clean_obj(corpus)
     result = {"title": title, "mode": kind, "stats": s, "projects": len(profile["projects"]), "invisible_work": len(profile["invisible"]),
