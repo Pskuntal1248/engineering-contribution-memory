@@ -128,7 +128,8 @@ class PlatformStore:
         items: list[dict[str, Any]] = []
         for k in sorted(k for k in by_key if k.startswith("items-")):
             items += by_key[k].get("rows", [])
-        p: dict[str, Any] = {**marker, "items": items, "seen": by_key.get("seen", {}).get("ids", []), "verdicts": by_key.get("verdicts", {}).get("v", {})}
+        p: dict[str, Any] = {**marker, "items": items, "seen": by_key.get("seen", {}).get("ids", []), "verdicts": by_key.get("verdicts", {}).get("v", {}),
+                          "cards": by_key.get("cards", {}).get("c", []), "dverdicts": by_key.get("dverdicts", {}).get("d", {})}
         if marker.get("n_items", 0) and not items:  # marker says there was history, the store is empty: do not pretend
             p.update(backfill_done=False, last_run="", items=[], _store_empty=True)
         return p
@@ -144,6 +145,8 @@ class PlatformStore:
                 await self.store.adelete(self.NS, it.key)
         await self.store.aput(self.NS, "seen", {"ids": profile.get("seen", [])})
         await self.store.aput(self.NS, "verdicts", {"v": profile.get("verdicts", {})})
+        await self.store.aput(self.NS, "cards", {"c": profile.get("cards", [])})  # saved project names, goals, outcomes
+        await self.store.aput(self.NS, "dverdicts", {"d": profile.get("dverdicts", {})})  # saved decision wording
         marker = {k: profile[k] for k in ("cursors", "last_run", "backfill_done", "gaps") if k in profile}
         marker.update(schema=SCHEMA, n_items=len(rows))
         return {"marker": marker}
