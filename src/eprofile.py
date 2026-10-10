@@ -60,7 +60,12 @@ async def build(items: list[Item], *, username: str, names: set[str], llm, budge
     decisions = analysis.find_decisions(items, names, username, dverd)
 
     # projects (only those with real work, 2+ items), cards by model or rules
-    base = [analysis.baseline_project_card(pid, c["item_ids"], by_id, username) for pid, c in sorted(clusters.items()) if len(c["item_ids"]) >= MIN_PROJECT_ITEMS]
+    # a project needs 2+ linked items and at least one item that is real tracked work (PR, ticket, commit, review or doc).
+    # Slack threads that only resemble each other are chatter, not a project.
+    def is_project(c: dict) -> bool:
+        return len(c["item_ids"]) >= MIN_PROJECT_ITEMS and any(by_id[i].type != "thread" for i in c["item_ids"])
+
+    base = [analysis.baseline_project_card(pid, c["item_ids"], by_id, username) for pid, c in sorted(clusters.items()) if is_project(c)]
     cards, n2 = await analysis.project_cards_with_model(llm, budget, base, by_id, username)
     notes += n2
     for card in cards:
@@ -90,7 +95,7 @@ async def build(items: list[Item], *, username: str, names: set[str], llm, budge
     team_ev = [i for i in items if i.meta.get("confidential")]
     return {
         "projects": projects_clean, "invisible": invisible, "decisions": decisions, "skills": skills, "improvements": improv,
-        "gaps": gaps, "stats": stats, "notes": notes, "project_of": project_of,
+        "gaps": gaps, "stats": stats, "notes": notes, "project_of": {i: p for i, p in project_of.items() if p in {c["project_id"] for c in projects_clean}},
         "verdicts": {k: v.model_dump() for k, v in allv.items()},
         "confidential": sorted(confidential_ids(items)),
         "top": [{"id": i.id, "title": i.title, "lines": metrics.contribution_size(i)} for i in metrics.top_contributions(items, 8)],
