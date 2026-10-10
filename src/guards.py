@@ -264,7 +264,8 @@ def first_person(text: str) -> str:
     out = text or ""
     for rx, rep in _FP:
         out = re.sub(rx, rep, out, flags=re.I if rx.startswith(r"\bthe") else 0)
-    out = re.sub(r"\bThe (?:text|doc|document|page|ADR|design)\s+(?:decides|decided)\s+(?:to|that)\s+", "We will ", out)
+    out = re.sub(r"\bThe (?:(?:accepted|proposed|approved|final) )?(?:text|doc|document|page|ADR|design)\s+(?:decides|decided)\s+(?:to|that)\s+", "We will ", out)
+    out = re.sub(r"^Proposes:\s*", "We propose to ", out)
     out = re.sub(r"\bThe (?:text|doc|document|page)\s+(?:states|says|records|proposes)\s+(?:that\s+)?", "", out)
     return re.sub(r"(^|[.!?] )i ", lambda m: m.group(1) + "I ", out)
 
