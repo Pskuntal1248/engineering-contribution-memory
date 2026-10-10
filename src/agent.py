@@ -170,6 +170,9 @@ def make_graph(deps: Deps):
         result["model_calls"] = ctx["budget"].calls
         result["seconds"] = round(ctx["budget"].elapsed(), 1)
         result["new_items"] = len(ctx["new_ids"])
+        wanted_docs = _docs_sources(str(inp.get("docs_source", "")))
+        result["docs_sources_asked"] = wanted_docs
+        result["docs_items_by_source"] = {s: sum(1 for i in items if i.type == "doc" and (str(i.meta.get("doc_source", "")).lower() in s or s in str(i.meta.get("doc_source", "")).lower())) for s in wanted_docs}
         result["dm_reads"] = len(ctx["log"].dm_reads())
         result["page_preview"] = outputs.to_markdown(corpus, with_tables=False)[:5000]  # the text itself, without the long ledger table
         outputs.write_local_copy(corpus)
