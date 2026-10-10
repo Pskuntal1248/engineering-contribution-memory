@@ -314,7 +314,8 @@ def map_skills(items: list[Item]) -> list[dict[str, Any]]:
         if len(ids) >= 2 or (len(ids) == 1 and (re.search(pat, next(i.title for i in items if i.id == ids[0]), re.I) or next(i.type for i in items if i.id == ids[0]) == "thread")):
             by = {i.id: i for i in items}
             work = _distinct_work([by[x] for x in ids])  # a PR, its ticket and its commits are one piece of work
-            out.append({"skill": skill, "count": len(work), "evidence": sorted(ids, key=lambda x: (_RANK.get(by[x].type, 9), x))[:6]})
+            rank = {"doc": 0, "pr": 1, "ticket": 2, "thread": 3, "commit": 4, "review": 5} if skill == "technical design" else _RANK  # design: the pages the user wrote first
+            out.append({"skill": skill, "count": len(work), "evidence": sorted(ids, key=lambda x: (rank.get(by[x].type, 9), by[x].meta.get("docs_only", False), x))[:6]})
     return sorted(out, key=lambda d: (-d["count"], d["skill"]))
 
 
