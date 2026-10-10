@@ -149,7 +149,7 @@ def test_full_run_uses_platform_store_and_keeps_memory_small():
     assert r["stats"]["tickets_touched"] == 3 and r["stats"]["docs"] == 3 and r["stats"]["threads"] == 1
     # second run reads the history back from the store and runs as weekly
     out2 = asyncio.run(g.ainvoke({"inputs": inp, "memory": mem}))
-    assert out2["result"]["mode"] == "weekly" and out2["result"]["ledger_rows"] >= r["ledger_rows"]
+    assert out2["result"]["mode"] == "weekly" and out2["result"]["ledger_rows"] == 0  # weekly lists only new rows
     # the store lost its data but memory says there was a backfill: say so and backfill again
     out3 = asyncio.run(agent.make_graph(agent.Deps(deps.source_factory, store_factory=lambda mem: PlatformStore(InMemoryStore(), mem), now=lambda: NOW)).ainvoke({"inputs": inp, "memory": mem}))
     assert out3["result"]["mode"] == "backfill"
