@@ -100,6 +100,7 @@ def find_invisible(items: list[Item], links: dict[str, list[str]], display_names
 
 _DECISION_WORDS = re.compile(r"\b(adr|rfc|design docs?|design proposal|proposal|decision records?|decision)\b", re.I)
 _DECISION_PATH = re.compile(r"(^|/)(adrs?|rfcs?|decisions?)/|(^|/)docs/design/", re.I)
+_STRONG_WORDS = re.compile(r"\b(adr(-?\d+)?|rfc(-?\d+)?|design docs?|architecture decision records?)\b", re.I)
 
 
 def is_decision_candidate(it: Item) -> bool:
@@ -107,7 +108,17 @@ def is_decision_candidate(it: Item) -> bool:
     if it.type not in {"pr", "doc"} or not it.meta.get("mine") or it.meta.get("is_revert") or it.meta.get("reverted"):
         return False
     hay = " ".join([it.title, " ".join(it.meta.get("labels", []) or []), str(it.meta.get("branch", ""))])
+    if it.type == "doc" and re.search(r"\b(design|architecture)\b", it.title, re.I):
+        return True
     return bool(_DECISION_WORDS.search(hay) or any(_DECISION_PATH.search(p) for p in it.meta.get("paths", []) or []))
+
+
+def is_strong_decision(it: Item) -> bool:
+    """ADR / RFC / design-doc by name or path: counted by rule, the model can only word it, never veto it."""
+    if not is_decision_candidate(it):
+        return False
+    hay = " ".join([it.title, " ".join(it.meta.get("labels", []) or []), str(it.meta.get("branch", ""))])
+    return bool(_STRONG_WORDS.search(hay) or any(_DECISION_PATH.search(p) for p in it.meta.get("paths", []) or []))
 
 
 class DecisionVerdict(BaseModel):
@@ -153,25 +164,19 @@ async def classify_decisions_with_model(llm: LLM | None, budget: Budget, cands: 
 def find_decisions(items: list[Item], display_names: set[str], username: str,
                    verdicts: dict[str, DecisionVerdict] | None = None) -> list[dict[str, Any]]:
     """Design docs / ADRs, as docs or as PRs. Role: author = led; editor or reviewer only = contributed.
-    A model verdict, when there is one, can reject a candidate; without one the rules decide."""
+    ADR/RFC/design-doc items (by name or path) always count; the model can only add a summary. Weaker candidates
+    (words like proposal or decision) need a model "yes", or the decision wording in a doc's own text when there is no model."""
     out = []
     for it in items:
+        if not is_decision_candidate(it):
+            continue
         v = (verdicts or {}).get(it.id)
-        if it.type == "doc":
-            if not it.meta.get("mine"):
+        if not is_strong_decision(it):
+            ok = v.is_decision if v is not None else (it.type == "pr" or bool(_DECISION.search(it.text)))
+            if not ok:
                 continue
-            labs = " ".join(it.meta.get("labels", [])).lower()
-            if not (re.search(r"\b(adr|rfc|design)\b", labs + " " + it.title.lower()) and (_DECISION.search(it.text) or (v and v.is_decision))):
-                continue
-        elif it.type == "pr":
-            if not is_decision_candidate(it) or (v is not None and not v.is_decision):
-                continue
-        else:
-            continue
-        if v is not None and not v.is_decision:
-            continue
         author_is_me = it.author in display_names or it.author.lower() == username.lower()
-        summary = v.summary if v and v.summary else re.sub(r"\s+", " ", it.text or it.title)[:220]
+        summary = v.summary if v is not None and v.is_decision and v.summary else re.sub(r"\s+", " ", it.text or it.title)[:220]
         out.append({"doc": it.id, "title": it.title, "role": "led" if author_is_me else "contributed", "evidence": [it.id],
                     "summary": summary, "confidential": bool(it.meta.get("confidential")),
                     "co_contributors": [] if author_is_me else [it.author]})
