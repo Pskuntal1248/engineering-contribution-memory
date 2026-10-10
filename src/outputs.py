@@ -140,7 +140,10 @@ def block(title: str, sentence: str = "", facts: list[str] | None = None, items:
             nm = {"pr": "PR", "ticket": "ticket", "commit": "commit", "doc": "doc", "thread": "Slack conversation", "review": "review"}.get(its[0].type, "source")
             paras.append((f"[Source: {nm}]({its[0].url})" if its[0].url else f"Source: {nm}") + (f" {FLAG}" if its[0].meta.get("confidential") else ""))
         elif len(lines) == 1 and not facts:
-            paras.append(lines[0])
+            one = lines[0]
+            if len(its) > 1 and ": " in one and any(_same_title(title, x) for x in its):
+                one = one.split(": ", 1)[1]  # the heading is the title already; the line is just the links
+            paras.append(one)
         else:
             paras.append(f"{label}:\n" + "\n".join(f"- {x}" for x in lines))
     return "\n\n".join(paras)
@@ -297,9 +300,11 @@ def _what_it_did(i: Item, by_id: dict[str, Item]) -> str:
     t = {re.sub(r"\W+", " ", x.title).lower().strip() for x in _with_ticket(i, by_id)}
     for src in _with_ticket(i, by_id):
         body = re.sub(r"\b(closes|fixes|resolves|related|refs?)\b[^.]*\.?", "", src.text or "", flags=re.I)
-        body = re.sub(r"\s+", " ", re.sub(r"[#*_`>-]+", " ", body)).strip()
+        body = re.sub(r"\s+", " ", re.sub(r"(^|\s)[#*_`>]+", " ", body)).strip()
+        body = re.sub(r"^(?:[A-Z][A-Z0-9]+-\d+\s*[:\-]?\s*)+", "", body)  # a leading ticket key is not part of the sentence
         m = re.match(r"(.+?[.!?])(?:\s|$)", body)
         sent = (m.group(1) if m else body).strip()
+        sent = sent[:1].upper() + sent[1:]
         if len(sent) >= 20 and re.sub(r"\W+", " ", sent).lower().strip() not in t:
             return " What it did: " + clip(sent, 180)
     return ""
@@ -379,7 +384,7 @@ def weekly_sections(profile: dict[str, Any], by_id: dict[str, Item], ids: set[st
     for i in work:
         by_proj.setdefault(pname.get(pof.get(i.id, ""), "Other work"), []).append(i)
     shipped_blocks = ["**" + n + "**\n\n" + "\n".join(f"- {x}" for x in _group_links(with_tickets(g))[:15]) for n, g in sorted(by_proj.items(), key=lambda kv: (kv[0] == "Other work", kv[0]))]
-    prog = [i for i in fresh if i.type == "pr" and not shipped(i) and not i.meta.get("reverted") and not i.meta.get("is_revert") and not i.meta.get("generated_only") and i.meta.get("state") != "closed"]
+    prog = [i for i in fresh if i.type == "pr" and not shipped(i) and not i.meta.get("reverted") and not i.meta.get("is_revert") and not i.meta.get("generated_only") and not i.meta.get("docs_only") and i.meta.get("state") != "closed"]
 
     def from_window(labels: set[str]) -> list[str]:
         return [block(by_id[v["evidence"][0]].title, v["summary"], items=[by_id[v["evidence"][0]]]) for v in profile["invisible"] if v["label"] in labels and v["evidence"] and v["evidence"][0] in by_id and any(e in ids for e in v["evidence"])]
