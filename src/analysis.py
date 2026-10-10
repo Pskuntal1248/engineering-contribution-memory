@@ -283,7 +283,7 @@ SKILL_LEXICON = {
     "debugging & incident response": r"incident|pager|root cause|traced|debugg|stack trace|postmortem",
     "code review": r"code review|reviewed (the |his |her |their )?(pr|pull request)|review comments?|lgtm|nit:|requested changes",
     "mentoring": r"mentor|paired|new joiner|onboard",
-    "technical design": r"adr|design doc|rfc|decision",
+    "technical design": r"adr|design doc|design:|rfc|decision",
 }
 
 
