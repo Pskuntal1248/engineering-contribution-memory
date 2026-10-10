@@ -47,7 +47,10 @@ def build_statements(profile: dict[str, Any], by_id: dict[str, Item], kind: str,
         for p in profile["projects"]:
             if within(p["evidence"]):
                 co = f" with {', '.join(p['co_contributors'][:3])}" if p.get("co_contributors") else ""
-                sts.append(Statement(f"{p['name']}: {p['outcome']}; role {p['role']}{co}.", p["evidence"][:6], p["role"]))
+                tm = ""
+                if len(p.get("teams") or []) > 1:
+                    tm = " Teams: " + ", ".join(f"{t['team']}{' (from ' + t['since'] + ')' if t['since'] else ''}" for t in p["teams"]) + "."
+                sts.append(Statement(f"{p['name']}: {p['outcome']}; role {p['role']}{co}.{tm}", p["evidence"][:6], p["role"]))
     for v in profile["invisible"]:
         if within(v["evidence"]):
             sts.append(Statement(f"Not in any ticket ({v['label'].replace('_',' ')}): {v['summary']}", v["evidence"], "supported"))
@@ -190,3 +193,44 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
               "unavailable": list(dict.fromkeys(f["source"] for f in failed)),
               "unavailable_reasons": list({f["source"]: f.get("error", "") for f in failed}.items()), "notes": run_notes, "ledger_rows": len(rows)}
     return corpus, result
+
+
+def to_markdown(corpus: dict[str, Any], with_tables: bool = True, level: int = 2) -> str:
+    """The page as plain markdown, so a local run can be read without the platform."""
+    lines: list[str] = []
+    if level == 2:
+        lines += [f"# {corpus.get('title', '')}", "", str(corpus.get("summary", "")), ""]
+    for sec in corpus.get("sections", []):
+        lines += [f"{'#' * level} {sec.get('heading', '')}", ""]
+        if sec.get("body"):
+            lines += [str(sec["body"]), ""]
+        for f in sec.get("facts", []) or []:
+            lines.append(f"- {f['label']}: {f['value']} (source: {f.get('source', '')})")
+        for b in sec.get("bullets", []) or []:
+            lines.append(f"- {b}")
+        if sec.get("table") and with_tables:
+            t = sec["table"]
+            lines += ["| " + " | ".join(map(str, t["columns"])) + " |", "|" + " --- |" * len(t["columns"])]
+            lines += ["| " + " | ".join(str(c).replace("|", "/") for c in r) + " |" for r in t["rows"]]
+        if sec.get("sections"):
+            lines.append(to_markdown({"sections": sec["sections"]}, with_tables, level + 1))
+        lines.append("")
+    return "\n".join(lines)
+
+
+def write_local_copy(corpus: dict[str, Any], directory: str = ".gravity") -> None:
+    """Local convenience only: lets `gravity run` output be read from disk. Never touches a source; failures are ignored."""
+    try:
+        import csv
+        import os
+        os.makedirs(directory, exist_ok=True)
+        with open(os.path.join(directory, "last_output.md"), "w", encoding="utf-8") as f:
+            f.write(to_markdown(corpus))
+        first = next((s["table"] for s in corpus.get("sections", []) if s.get("table")), None)
+        if first:
+            with open(os.path.join(directory, "last_ledger.csv"), "w", encoding="utf-8", newline="") as f:
+                w = csv.writer(f)
+                w.writerow(first["columns"])
+                w.writerows(first["rows"])
+    except Exception:  # noqa: BLE001
+        pass
