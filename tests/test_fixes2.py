@@ -314,3 +314,20 @@ def test_run_all_checker_flags_a_taskgroup_and_passes_a_clean_weekly_output(tmp_
     assert any("commit" in f for f in fails)
     ok, fails = ra.check_mode("one_on_one", "## Wins\n\n**T**\n\nI did.\n\n## Appendix: item ledger\n\nx\n", {"seconds": 500, "model_calls": 30}, 500, 0, "", 120, 10)
     assert any("link" in f for f in fails) and any("runtime" in f for f in fails) and any("model calls" in f for f in fails)
+
+
+def test_ladder_heading_x_to_y_means_next_level_and_short_never_ends_on_a_stopword():
+    from ladder import parse_framework
+    ex = parse_framework("Software Engineer to Senior Software Engineer expectations:\n1. Mentors juniors.\n2. Leads a design.", "Software Engineer")
+    assert [e.level for e in ex] == ["next", "next"]
+    from outputs import short
+    from guards import first_person
+    assert not short("I keep getting a null pointer in the retry worker, not sure how to debug it.", 70).endswith(("to...", "how..."))
+    assert first_person("The text decides to run reconciliation nightly.") == "We will run reconciliation nightly."
+
+
+def test_review_decision_statement_does_not_repeat_the_title_and_empty_period_says_where_items_are():
+    from outputs import _empty_period, short
+    it = Item(id="x", source="github", type="pr", date="2026-10-10", title="t", meta={})
+    assert "2026-10-10" in _empty_period([it], "2026-04-01", "2026-09-30")
+    assert _empty_period([it], "", "") == "None found in this period."
