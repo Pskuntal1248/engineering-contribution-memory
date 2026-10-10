@@ -16,7 +16,7 @@ TEXT_KEEP = 160
 
 def compact(it: Item, project: str) -> dict[str, Any]:
     m = it.meta
-    keep = {k: m[k] for k in ("mine", "confidential", "repo", "number", "merged_flag", "reverted", "is_revert", "received", "reopen_count", "status", "channel", "my_messages", "cycle_hours", "participants") if k in m}
+    keep = {k: m[k] for k in ("mine", "confidential", "repo", "number", "merged_flag", "reverted", "is_revert", "received", "reopen_count", "status", "channel", "my_messages", "cycle_hours", "participants", "paths") if k in m}
     keep["size"] = (m.get("size") or {}).get("lines") if m.get("size") else None
     return {"id": it.id, "s": it.source, "t": it.type, "date": it.date, "title": it.title[:90], "url": it.url, "text": it.text[:TEXT_KEEP],
             "author": it.author, "co": it.co_authors[:4], "keys": it.keys[:5], "p": project, "m": keep}
@@ -28,6 +28,9 @@ def expand(row: dict[str, Any]) -> Item:
         m["size"] = {"lines": m["size"], "excluded": 0, "files": 0, "basis": "stored"}
     return Item(id=row["id"], source=row["s"], type=row["t"], date=row["date"], title=row["title"], url=row["url"], text=row["text"],
                 author=row.get("author", ""), co_authors=row.get("co", []), keys=row.get("keys", []), meta=m)
+
+
+MIN_PROJECT_ITEMS = 2  # a project needs at least 2 linked items
 
 
 async def build(items: list[Item], *, username: str, names: set[str], llm, budget: Budget, framework: str, role_and_level: str,
@@ -48,8 +51,8 @@ async def build(items: list[Item], *, username: str, names: set[str], llm, budge
     invisible = analysis.find_invisible(items, links, names, allv)
     decisions = analysis.find_decisions(items, names, username)
 
-    # projects (only those with real work, i.e. 2+ items), cards by model or rules
-    base = [analysis.baseline_project_card(pid, c["item_ids"], by_id, username) for pid, c in sorted(clusters.items()) if len(c["item_ids"]) >= 5]
+    # projects (only those with real work, 2+ items), cards by model or rules
+    base = [analysis.baseline_project_card(pid, c["item_ids"], by_id, username) for pid, c in sorted(clusters.items()) if len(c["item_ids"]) >= MIN_PROJECT_ITEMS]
     cards, n2 = await analysis.project_cards_with_model(llm, budget, base, by_id, username)
     notes += n2
     for card in cards:
