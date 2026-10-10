@@ -8,6 +8,8 @@ from typing import Any, Iterable
 
 from models import Item
 
+TRIVIAL_TITLE = re.compile(r"^\s*(initial commit|first commit|init(ial(ize|ise)?)?\b|repository init\w*|repo init\w*|bootstrap|scaffold|add (readme|license|gitignore)|update readme|readme|chore: ?init)", re.I)
+
 ROLES = ("led", "built", "contributed", "reviewed", "supported")
 
 
