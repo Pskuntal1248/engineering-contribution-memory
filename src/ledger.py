@@ -18,6 +18,12 @@ def counted_label(it: Item) -> str:
         if it.meta.get("reverted"):
             return "reverted (not shipped)"
         return "shipped" if shipped(it) else "open or closed unmerged"
+    if it.type == "commit":
+        if it.meta.get("is_revert"):
+            return "revert (not counted)"
+        if it.meta.get("reverted"):
+            return "reverted (not counted)"
+        return "counted" if it.meta.get("mine") else ""
     return ""
 
 
