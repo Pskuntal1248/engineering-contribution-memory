@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 import ledger
+from analysis import NEEDS_DECISION
 from guards import FLAG, clip, TRIVIAL_TITLE, Statement, drop_colleague_assessments, flag_confidential, internal_terms, keep_cited, predicts_promotion, scrub
 from metrics import shipped
 from models import Item
@@ -284,12 +285,35 @@ def _first_person_win(it: Item) -> str:
 _VERB = {"problem_solved": "I debugged and fixed a problem", "help_given": "I helped a teammate", "mentoring": "I mentored a teammate", "decision": "I drove a technical choice"}
 
 
+def _with_ticket(i: Item, by_id: dict[str, Item]) -> list[Item]:
+    """The PR and the ticket it names in its title or branch, so the line links both."""
+    tk = _title_key(i)
+    t = next((x for x in by_id.values() if x.type == "ticket" and tk and _title_key(x) == tk), None)
+    return [i] + ([t] if t else [])
+
+
+def _what_it_did(i: Item, by_id: dict[str, Item]) -> str:
+    """One plain sentence on what the change did, from the PR body or its ticket text. Nothing when the sources only repeat the title."""
+    t = {re.sub(r"\W+", " ", x.title).lower().strip() for x in _with_ticket(i, by_id)}
+    for src in _with_ticket(i, by_id):
+        body = re.sub(r"\b(closes|fixes|resolves|related|refs?)\b[^.]*\.?", "", src.text or "", flags=re.I)
+        body = re.sub(r"\s+", " ", re.sub(r"[#*_`>-]+", " ", body)).strip()
+        m = re.match(r"(.+?[.!?])(?:\s|$)", body)
+        sent = (m.group(1) if m else body).strip()
+        if len(sent) >= 20 and re.sub(r"\W+", " ", sent).lower().strip() not in t:
+            return " What it did: " + clip(sent, 180)
+    return ""
+
+
 def one_on_one(profile: dict[str, Any], by_id: dict[str, Item], sts: list[Statement]) -> list[dict[str, Any]]:
     """First-person talking points. Each item: bold title, one plain sentence, its link on its own line."""
     mine = [i for i in by_id.values() if i.meta.get("mine")]
     prs = [i for i in mine if i.type == "pr" and shipped(i) and not _TRIVIAL.search(i.title)]
-    prs = sorted(prs, key=lambda i: (-len(i.keys), i.date))[:4]
-    wins = [block(short(i.title, 80), f"I shipped this on {i.date[:10]}" + (f" ({', '.join(k for k in i.keys[:2] if k)})." if i.keys else "."), items=[i]) for i in prs]
+    prs = sorted(prs, key=lambda i: (i.date, i.id))
+    shown = prs[:8]
+    wins = [block(short(i.title, 80), f"I shipped this on {i.date[:10]}." + _what_it_did(i, by_id), items=_with_ticket(i, by_id)) for i in shown]
+    if len(prs) > len(shown):
+        wins.append(f"Showing {len(shown)} of {len(prs)} shipped PRs; the rest are in the item ledger.")
     if not wins:  # no shipped PRs: finished tickets, still real work
         done = [i for i in mine if i.type == "ticket" and str(i.meta.get("status", "")).lower() in {"done", "closed", "resolved"}][:3]
         wins = [block(short(i.title, 80), "I closed this ticket.", items=[i]) for i in done]
@@ -301,11 +325,16 @@ def one_on_one(profile: dict[str, Any], by_id: dict[str, Item], sts: list[Statem
         where = f" in #{it.meta.get('channel')}" if it.meta.get("channel") else ""
         summ = re.sub(r"\s+", " ", v["summary"]).strip()
         unseen.append(block(it.title, f"{_VERB.get(v['label'], 'I helped')}{where} on {it.date[:10]}, with no ticket raised: {summ}", items=[it]))
-    decs = []
-    for d in profile["decisions"][:3]:
+    decs, made = [], []
+    for d in profile["decisions"][:6]:
         it = by_id.get(d["evidence"][0])
         role = "I led" if d["role"] == "led" else "I contributed to"
-        decs.append(block(short(d["title"], 80), f"{role} this and would like a call on whether we take it forward.", items=[it] if it else []))
+        summ = "" if _PLACEHOLDER.search(d["summary"]) else clip(re.sub(r"\s+", " ", d["summary"]).strip(), 200)
+        open_ = bool(it and (it.meta.get("needs_decision") or NEEDS_DECISION.search(it.text or "")))  # open only when the source itself says it needs a decision
+        if open_:
+            decs.append(block(short(d["title"], 80), f"{role} this. {summ}".strip() + " The source says this still needs a decision.", items=[it]))
+        else:
+            made.append(block(short(d["title"], 80), f"{role} this. {summ}".strip(), items=[it] if it else []))
     blockers = [block(short(i.title, 80), f"This ticket was reopened {i.meta.get('reopen_count')} time(s).", items=[i]) for i in sorted(mine, key=lambda x: x.date)
                 if i.type == "ticket" and i.meta.get("reopen_count", 0) > 0][:3]
     working = [block(short(i.title, 80), "My PR is still open.", items=[i]) for i in sorted(mine, key=lambda x: x.date)
@@ -316,7 +345,7 @@ def one_on_one(profile: dict[str, Any], by_id: dict[str, Item], sts: list[Statem
         working.append(block(f"Review feedback: {a['label']}", f"I got this feedback {a['count']} times and am working on it.", items=_ev(a["item_ids"], by_id, 1)))
     gaps = [g for g in profile["gaps"] if g["status"] != "backed" and g["level"] == "next"]
     out = [{"heading": "Wins", "blocks": wins}, {"heading": "You may not have seen", "blocks": unseen}, {"heading": "Blockers", "blocks": blockers},
-           {"heading": "Decision needing input", "blocks": decs}, {"heading": "Working on", "blocks": working}]
+           {"heading": "Decisions made", "blocks": made}, {"heading": "Decision needing input", "blocks": decs}, {"heading": "Working on", "blocks": working}]
     if gaps:
         out.append({"heading": "For the next level", "blocks": [block(g["expectation"], "No evidence yet." if g["status"] == "missing" else f"Only {len(g['evidence'])} item(s), thin.", items=_ev(g["evidence"], by_id, 2)) for g in gaps[:4]]})
     return [{"heading": s["heading"], "body": "\n\n".join(s["blocks"])} for s in out if s["blocks"]]
