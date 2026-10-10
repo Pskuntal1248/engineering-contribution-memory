@@ -72,7 +72,7 @@ def make_graph(deps: Deps):
         req = str(inp.get("request") or "auto")
         has_memory = bool(prior.get("items") or prior.get("last_run"))  # an empty but completed run still counts
         if req == "auto":
-            req = "weekly" if has_memory else "backfill"
+            req = "weekly" if prior.get("backfill_done") else "backfill"  # weekly only after a backfill really completed
         if req in ON_DEMAND and not has_memory:
             req = "backfill"  # nothing to report from yet
         return {"ctx": {"mode": req, "prior": prior, "store": store, "notes": ["memory was unreadable, starting fresh"] if prior.get("_corrupt") else []}}
@@ -161,6 +161,7 @@ def make_graph(deps: Deps):
             "seen": sorted(set(prior.get("seen", [])) | {id_key(i.id) for i in items}),
             "cursors": next_cursors(prior.get("cursors", {}), [i for i in items if i.source]),
             "verdicts": prof["verdicts"], "last_run": deps.now().strftime("%Y-%m-%d"),
+            "backfill_done": bool(prior.get("backfill_done")) or ctx["mode"] == "backfill",
             "gaps": [{"id": g["id"], "status": g["status"]} for g in prof["gaps"]],
         }
         store = ctx["store"]
