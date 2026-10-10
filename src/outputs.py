@@ -216,7 +216,7 @@ def sar_block(p: dict[str, Any], by_id: dict[str, Item], conf: set[str], skip: s
     start = next((i for i in sorted(allev, key=lambda i: (i.type != "ticket", i.date)) if i.type in {"ticket", "pr"}), None)
     situation = p["goal"] if p.get("goal") and not _PLACEHOLDER.search(p["goal"]) else (f"It started with {short(start.title, 90)}." if start else "")
     co = f", with {', '.join(p['co_contributors'][:3])}" if p.get("co_contributors") else ""
-    mine_prs = sum(1 for i in allev if i.type == "pr" and i.meta.get("mine"))
+    mine_prs = sum(1 for i in allev if i.type == "pr" and i.meta.get("mine") and not (i.meta.get("is_revert") or i.meta.get("docs_only") or i.meta.get("generated_only")))  # revert, docs-only and lockfile PRs are not "authored work"
     action = f"{_ACTION.get(p['role'], 'I contributed to it')}{co}" + (f" and authored {mine_prs} PR{'' if mine_prs == 1 else 's'}" if mine_prs else "") + "."
     result = p["outcome"] if p.get("outcome") and not _PLACEHOLDER.search(p["outcome"]) else ""
     flag = (FLAG + " ") if any(e in conf for e in p["evidence"]) else ""
@@ -422,7 +422,10 @@ def stories(profile: dict[str, Any], by_id: dict[str, Item], terms: set[str], ke
         if v["label"] == "problem_solved":
             pool.append(("A hard bug", v["summary"], v["evidence"], "Tell me about a hard bug you debugged."))
     for d in profile["decisions"]:
-        pool.append(("A decision with trade-offs", d["summary"], d["evidence"], "Tell me about a technical decision you made and its trade-offs."))
+        if re.search(r"\b(instead of|rather than|versus|vs\.?|trade-?offs?|over using|alternative|but)\b", d["summary"], re.I):
+            pool.append(("A decision with trade-offs", d["summary"], d["evidence"], "Tell me about a technical decision you made and its trade-offs."))
+        else:  # the sources state no alternative, so it is not presented as a trade-off story
+            pool.append(("A technical decision", d["summary"], d["evidence"], "Tell me about a technical decision you made."))
     for v in profile["invisible"]:
         if v["label"] in {"mentoring", "help_given"}:
             pool.append(("Helping a teammate", v["summary"], v["evidence"], "Tell me about a time you helped someone unblock."))
