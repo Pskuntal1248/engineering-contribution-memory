@@ -140,3 +140,22 @@ def test_docs_only_cluster_is_not_a_project():
     from test_real_output import profile, ME
     docs = [Item(id=f"doc:confluence:{i}", source="doc", type="doc", date="2026-09-0%d" % i, title=f"Design note {i} payouts", text="payout design details here", url=f"https://x/{i}", keys=["PAY-9"], meta={"mine": True}) for i in (1, 2)]
     assert profile(docs)["projects"] == []
+
+
+def test_weekly_uses_profile_rules_groups_by_project_and_has_one_line_per_item():
+    from test_real_output import WORK, FOUR, profile, NAMES
+    from outputs import corpus_for, to_markdown
+    lock = Item(id="gh:pr:o/r#8", source="github", type="pr", date="2026-10-10T08:00:00Z", title="Update dependencies (lockfile only)", url="https://g/8", keys=[],
+                meta={"mine": True, "merged_flag": True, "generated_only": True, "number": 8, "repo": "o/r"})
+    items = WORK + FOUR + [lock]
+    prof = profile(items)
+    ids = {i.id for i in items}
+    corpus, res = corpus_for("weekly_summary", prof, items, title="Weekly summary", terms=set(), keep_internal=False, colleagues=[], names=NAMES, date_from="", date_to="",
+                             run_notes=[], failed=[], quiet_line=None, new_ids=ids, window_label="dated since 2026-10-03 (the last 7 days)")
+    md = to_markdown(corpus, with_tables=False)
+    assert "Initial commit" not in md.split("Appendix")[0] and "Update README" not in md.split("Appendix")[0]
+    assert "lockfile" not in md.split("Appendix")[0]
+    assert "dated since 2026-10-03" in md and "Decisions" in md
+    shipped_part = md.split("## Shipped")[1].split("##")[0]
+    assert "**" in shipped_part and shipped_part.count("Add query parser") == 1
+    assert "6 PRs shipped" in corpus["summary"] or "PRs shipped" in corpus["summary"]
