@@ -9,7 +9,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
 
-from guards import Budget, BudgetExceeded, Statement, cap_role, clip, co_contributors, first_person, drop_colleague_assessments, keep_cited
+from guards import Budget, BudgetExceeded, Statement, cap_role, clip, co_contributors, decision_voice, first_person, drop_colleague_assessments, keep_cited
 from linking import tokens
 from metrics import shipped
 from models import Item
@@ -225,7 +225,7 @@ def find_decisions(items: list[Item], display_names: set[str], username: str,
                 continue
         owner = str(it.meta.get("owner") or decision_owner(it.text))
         author_is_me = it.author in display_names or it.author.lower() == username.lower() or bool(owner and (owner in display_names or owner.lower() == username.lower() or owner.lower() in {n.lower() for n in display_names}))
-        summary = first_person(clip(v.summary, 220)) if v is not None and v.is_decision and v.summary else (str(it.meta.get("dsum") or "") or decision_sentence(it.text) or clip(it.title, 220))
+        summary = decision_voice(clip(v.summary, 220) if v is not None and v.is_decision and v.summary else (str(it.meta.get("dsum") or "") or decision_sentence(it.text) or clip(it.title, 220)))
         out.append({"doc": it.id, "title": it.title, "role": "led" if author_is_me else "contributed", "evidence": [it.id],
                     "summary": summary, "confidential": bool(it.meta.get("confidential")),
                     "co_contributors": [] if author_is_me else [it.author]})
