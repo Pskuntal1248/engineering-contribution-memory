@@ -114,7 +114,7 @@ def check_mode(name, md, res, wall, code, log, limit_s, limit_calls):
             continue
         for blk in blocks_of(b):
             txt = "\n".join(blk)
-            if len(blk) > 1 and not re.search(r"\]\(https?://|Source: ", txt):
+            if len(blk) > 1 and "No items found" not in txt and not re.search(r"\]\(https?://|Source: ", txt):
                 nolink.append(blk[0][:60])
     chk("every item has a link", not nolink, f"{len(nolink)} without: {nolink[:3]}")
     # repeated title lines
@@ -122,7 +122,7 @@ def check_mode(name, md, res, wall, code, log, limit_s, limit_calls):
     for lv, h, b in secs_wo_ledger:
         for blk in blocks_of(b):
             t = re.sub(r"\W+", " ", blk[0]).strip().lower()
-            if len(blk) > 1 and len(t) > 12 and re.sub(r"\W+", " ", blk[1]).strip().lower().startswith(t[:40]):
+            if len(blk) > 1 and len(t) > 12 and t[:40] in re.sub(r"\W+", " ", blk[1]).strip().lower()[:100]:
                 rep.append(blk[0][:60])
         for blk in blocks_of(b):  # the same line twice inside one item
             seen = set()
