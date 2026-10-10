@@ -89,8 +89,8 @@ def test_one_on_one_is_first_person_linked_and_free_of_ids_and_trivial_wins():
             "improvements": [{"label": "missing tests", "count": 3, "item_ids": ["p1"]}]}
     out = one_on_one(prof, {i.id: i for i in (init, real, th)}, [])
     text = to_markdown({"title": "t", "summary": "", "sections": out})
-    assert "I shipped PAY-1: idempotency key for payouts (PAY-1)" in text and "Initial commit" not in text
-    assert "I debugged and fixed a problem in #uc10-test" in text and "No ticket was raised" in text and "u-th" in text
+    assert "I shipped this on 2026-09-01 (PAY-1)." in text and "[PAY-1: idempotency key for payouts](u-p1)" in text and "Initial commit" not in text
+    assert "I debugged and fixed a problem in #uc10-test" in text and "no ticket raised" in text and "u-th" in text
     assert "U0BUNS1DT5E" not in text and "not stated" not in text and "the user" not in text.lower()
     assert "Working on" in text and "missing tests" in text
     assert no_ids("role contributed with U0BUNS1DT5E.") == "role contributed." and "U0BUNS1DT5E" not in no_ids("thanks U0BUNS1DT5E")
@@ -131,3 +131,51 @@ def test_docs_confluence_down_notion_and_drive_still_returned():
     srcs = {d["_source"] for d in out["docs"]}
     assert srcs == {"notion", "drive"}
     assert [f for f in out["failed"] if f["source"] == "docs:confluence" and "not enabled" in f["error"]]
+
+
+def _real(ts, text):
+    from datetime import datetime, timezone
+    d = datetime.fromtimestamp(float(ts), timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return Item(id=f"slack:G1:{ts}", source="slack", type="thread", date=d, title="#uc10-test thread", text=f"Parth Singh: {text}", author="Parth Singh",
+                meta={"channel": "uc10-test", "channel_id": "G1", "messages": 1, "my_messages": 1, "participants": ["Parth Singh"], "mine": True})
+
+
+def test_flat_messages_at_the_users_real_timestamps_merge_per_topic():
+    from pipeline import merge_threads
+    flat = [
+        _real("1791641890.36", "Settlement totals mismatch for the 18 Sep batch, looks like a timezone problem"),
+        _real("1791641910.75", "Traced it: the batch job used UTC while the settlement cutoff is IST"),
+        _real("1791641922.86", "Fixed the batch window config to use IST, settlement totals match now"),
+        _real("1791641933.69", "Walked a new joiner through the null pointer in the retry worker"),
+        _real("1791641945.33", "Mentored them on reading the stack trace for the null pointer"),
+        _real("1791641959.69", "Paired on the null pointer fix, they will add a retry worker test"),
+        _real("1791641969.96", "Pointed them to the retry worker docs for the null pointer follow-up"),
+        _real("1791641991.63", "How do I run the payouts service locally? Start the compose stack and use the env file"),
+    ]
+    out = merge_threads(flat)
+    sizes = sorted(i.meta["my_messages"] for i in out)
+    assert sizes == [1, 3, 4], sizes
+
+
+def test_clip_never_cuts_mid_word_and_first_person():
+    from guards import clip, first_person
+    t = clip("The deployment pipeline was fixed so that verification results now arrive before release and nothing ships blind to anyone", 60)
+    assert t.endswith("...") and not t[:-3].endswith(" ") and t[:-3].split()[-1] in "The deployment pipeline was fixed so that verification results now arrive before release".split()
+    assert clip("Short one. Second sentence runs on and on past the limit for sure here.", 40) == "Short one."
+    assert first_person("The user fixed it. the user is on call; the user's fix") == "I fixed it. I am on call; my fix"
+
+
+def test_thread_ts_is_read_from_the_permalink_when_the_search_hit_has_no_thread_ts():
+    import asyncio
+    from adapters import fetch_slack_search
+    from guards import ToolLog
+    seen = []
+
+    async def call(tool, args):
+        if tool == "slack.search_messages":
+            return {"data": {"messages": {"matches": [{"ts": "200.1", "user": "U1", "channel": {"id": "G1"}, "permalink": "https://x.slack.com/archives/G1/p2001?thread_ts=100.5&cid=G1"}]}}}
+        seen.append(args["ts"])
+        return {"data": {"messages": [{"ts": "100.5", "user": "U1", "text": "root"}, {"ts": "200.1", "user": "U1", "text": "reply"}]}}
+    out = {"failed": [], "capped": [], "slack": {"threads": []}}
+    asyncio.run(fetch_slack_search(call, [{"id": "G1", "name": "uc10-test"}], "2026-09-01", ToolLog(), out))
+    assert seen == ["100.5"] and len(out["slack"]["threads"]) == 1
