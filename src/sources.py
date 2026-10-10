@@ -73,7 +73,8 @@ class GatewaySource:
     against a connected account (see report). Every failure is captured per source."""
 
     def __init__(self, call: Call, username: str, repos: list[str], slack_channels: list[str], include_dms: bool,
-                 jira_projects: list[str], has: set[str], docs_sources: list[str] | None = None):
+                 jira_projects: list[str], has: set[str], docs_sources: list[str] | None = None, names: list[str] | None = None):
+        self.names = names or []
         self.docs_sources = [d.lower() for d in (docs_sources or [])]
         self.call, self.username, self.repos = call, username, repos
         self.slack_channels, self.include_dms, self.jira_projects, self.has = slack_channels, include_dms, jira_projects, has
@@ -94,7 +95,7 @@ class GatewaySource:
             if not any(src_name in d or (src_name == "google drive" and "drive" in d) for d in self.docs_sources):
                 continue
             if tool in self.has:
-                await fn(self.call, since, log, out)
+                await (fn(self.call, since, log, out, self.names) if src_name == "notion" else fn(self.call, since, log, out))
             else:
                 out["failed"].append({"source": f"docs:{src_name}", "error": f"{tool} is not available in this run"})
         if not self.docs_sources:
