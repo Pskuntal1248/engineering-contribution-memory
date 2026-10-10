@@ -405,3 +405,18 @@ def test_platform_store_keeps_cards_and_decision_wording_between_runs():
     back = asyncio.run(PlatformStore(st, mem).aload())
     assert back["cards"] == prof["cards"]
     assert back["dverdicts"] == prof["dverdicts"]
+
+
+def test_decision_voice_is_first_person_plural():
+    from guards import first_person
+    assert first_person("The accepted design decides to run it nightly.") == "We will run it nightly."
+    assert first_person("Proposes: move webhooks to a queue.") == "We propose to move webhooks to a queue."
+    assert first_person("We will use BM25.") == "We will use BM25."
+
+
+def test_design_doc_expectation_ignores_non_design_docs():
+    from ladder import Expectation, map_evidence
+    from models import Item
+    d = Item(id="d1", source="doc", type="doc", date="2026-10-10T00:00:00Z", title="Design: Search ranking approach", text="x", meta={"mine": True})
+    r = Item(id="d2", source="doc", type="doc", date="2026-10-10T00:00:00Z", title="Payout incident review", text="x", meta={"mine": True})
+    assert map_evidence(Expectation("E1", "next", "Writes clear design docs"), [d, r]) == ["d1"]
