@@ -110,8 +110,12 @@ def link(items: list[Item], repo_aliases: dict[str, str] | None = None, topic_th
         return alias.get(k, k)
 
     # 1. ticket keys: every item that mentions a key links to the ticket and to each other
+    # Work items (ticket, PR, commit, review) that share a key are one unit. A Slack thread or doc that names keys from several
+    # tickets only joins the unit of its FIRST key: it never bridges two units (a status thread must not merge PAY and AUTH).
     holders: dict[str, list[str]] = defaultdict(list)
     for i in items:
+        if i.type in {"thread", "doc"}:
+            continue
         for k in set(canon_key(k) for k in i.keys):
             holders[k].append(i.id)
     for k, ids in holders.items():
@@ -119,6 +123,12 @@ def link(items: list[Item], repo_aliases: dict[str, str] | None = None, topic_th
             uf.union(ids[0], other)
             why[other].append(f"ticket key {k}")
             why[ids[0]].append(f"ticket key {k}")
+    for i in items:
+        if i.type in {"thread", "doc"} and i.keys:
+            first = canon_key(i.keys[0])
+            if holders.get(first):
+                uf.union(holders[first][0], i.id)
+                why[i.id].append(f"ticket key {first}")
 
     # 2. same branch, same PR number (PR <-> its reviews/commits)
     pr_ids: dict[tuple[str, int], str] = {}
@@ -198,6 +208,15 @@ def link(items: list[Item], repo_aliases: dict[str, str] | None = None, topic_th
             c.update(vecs[iid])
         norm = math.sqrt(sum(x * x for x in c.values())) or 1.0
         cvec[r] = {t: x / norm for t, x in c.items()}
+    def prefixes(ids: list[str]) -> set[str]:
+        return {canon_key(k).split("-")[0] for iid in ids if by_id[iid].type not in {"thread", "doc"} for k in by_id[iid].keys if "-" in k}
+
+    pre = {r: prefixes(ids) for r, ids in units.items()}
+
+    def compatible(a: set[str], b: set[str]) -> bool:
+        """Units that belong to different Jira projects (PAY vs AUTH) are never folded into one project by topic similarity."""
+        return not a or not b or bool(a & b)
+
     order = sorted(units, key=lambda r: (-len(units[r]), r))
     seeds: list[str] = []
     members: dict[str, list[str]] = {}
@@ -205,6 +224,8 @@ def link(items: list[Item], repo_aliases: dict[str, str] | None = None, topic_th
     for r in order:
         best, score = None, 0.0
         for sd in seeds:
+            if not compatible(pre[r], set().union(*(pre[m] for m in members[sd]))):
+                continue
             sc = cosine(cvec[r], cvec[sd])
             if sc > score or (sc == score and best is not None and sd < best):
                 best, score = sd, sc
@@ -233,9 +254,13 @@ def link(items: list[Item], repo_aliases: dict[str, str] | None = None, topic_th
         for r in order:
             best, score = min(members), -1.0
             for g in sorted(cen):
+                if not compatible(pre[r], set().union(*(pre[m] for m in members[g]))):
+                    continue
                 sc = cosine(cvec[r], cen[g])
                 if sc > score:
                     best, score = g, sc
+            if score < 0:  # nothing compatible: stay where it was
+                best = next((g for g, rs in members.items() if r in rs), best)
             new[best].append(r)
         members = {g: rs for g, rs in new.items() if rs}
     cen = centroids(members)
@@ -243,8 +268,23 @@ def link(items: list[Item], repo_aliases: dict[str, str] | None = None, topic_th
         if a not in members:
             continue
         for b in sorted(members):
-            if b != a and b in members and cosine(cen[a], cen[b]) >= 0.6:
+            if b != a and b in members and cosine(cen[a], cen[b]) >= 0.6 and compatible(
+                    set().union(*(pre[m] for m in members[a])), set().union(*(pre[m] for m in members[b]))):
                 members[a] += members.pop(b)
+    # small leftovers from the same Jira project (a few PR+ticket pairs, 6 items or fewer per group) are one project, not several:
+    # PAY-1, PAY-2 and PAY-3 are PAY work. Big groups are never folded, so separate projects inside one Jira project stay separate.
+    def gsize(g: str) -> int:
+        return sum(len(units[r]) for r in members[g])
+
+    def gpre(g: str) -> frozenset:
+        return frozenset(set().union(*(pre[m] for m in members[g])))
+    by_pre: dict[frozenset, list[str]] = defaultdict(list)
+    for g in sorted(members):
+        if gpre(g) and gsize(g) <= 6:
+            by_pre[gpre(g)].append(g)
+    for gs in by_pre.values():
+        for other in gs[1:]:
+            members[gs[0]] += members.pop(other)
     clusters = defaultdict(list)
     for sd, rs in members.items():
         for r in rs:
