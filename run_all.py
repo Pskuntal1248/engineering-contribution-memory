@@ -242,8 +242,11 @@ def main():
         ok, fails = check_mode(name, md, res, wall, code, log, ls, lc)
         rows.append((name, ok, res, wall))
         all_fails += fails
-        if name == "backfill" and not md and not check_only:
-            print("backfill produced no output; later modes need it, stopping", flush=True)
+        if name == "backfill" and not check_only and (not md or not res.get("ledger_rows")):
+            print("\n*** BACKFILL FOUND 0 ITEMS (or no output). The sources returned nothing, so every later mode would be empty. Stopping. ***", flush=True)
+            print("Last lines of out/backfill.log:\n" + "\n".join(log.strip().splitlines()[-25:]), flush=True)
+            rows.append(("BACKFILL EMPTY", False, res, wall))
+            all_fails.append("[backfill] 0 items fetched: check the connector errors in the log above (token expired, tool refused), then rerun")
             break
     cok, cfails = cross_checks([n for n, *_ in rows])
     rows.append(("consistency", cok, {}, 0.0))
