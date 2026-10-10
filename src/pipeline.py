@@ -83,33 +83,49 @@ def _toks_clean(text: str) -> set[str]:
     return _toks(body)
 
 
+def _stem(w: str) -> str:
+    for suf in ("ing", "ed", "es", "s"):
+        if w.endswith(suf) and len(w) - len(suf) >= 4:
+            return w[: -len(suf)]
+    return w
+
+
 def merge_threads(items: list[Item], gap_minutes: int = 10) -> list[Item]:
-    """Flat Slack messages that are really one conversation become one item. A message joins the group before it only when it is
-    the same channel and DM-ness, from an overlapping participant, at most `gap_minutes` after the group's last message, has
-    no conflicting ticket keys, and shares 2+ topic words with what the group has said so far. Different topics share no
-    words, so four topics posted by one person in a minute stay four items. Real threads are already one item each."""
+    """Flat Slack messages that are one conversation become one item. Each message is compared only with the message right before
+    it (never with a growing group, which chains different topics together). It continues that conversation when: same channel and
+    DM-ness, overlapping participant, at most `gap_minutes` later, no conflicting ticket keys, and it shares two words, or one specific word
+    (6+ letters, in at most half of the channel's messages). Real threads are already one item each."""
     from datetime import datetime
 
     def when(i: Item) -> float:
         return datetime.fromisoformat(i.date.replace("Z", "+00:00")).timestamp()
     threads = sorted((i for i in items if i.type == "thread"), key=lambda i: (i.meta.get("channel_id", ""), i.date, i.id))
     rest = [i for i in items if i.type != "thread"]
+    toks = {i.id: {_stem(w) for w in _toks_clean(i.text)} for i in threads}
+    per_channel: dict[str, list[str]] = {}
+    for i in threads:
+        per_channel.setdefault(i.meta.get("channel_id", ""), []).append(i.id)
+    common: dict[str, set[str]] = {}
+    for ch, ids in per_channel.items():
+        freq: dict[str, int] = {}
+        for k in ids:
+            for w in toks[k]:
+                freq[w] = freq.get(w, 0) + 1
+        common[ch] = {w for w, c in freq.items() if len(ids) >= 5 and c / len(ids) > 0.5}
     groups: list[list[Item]] = []
-    vocab: list[set[str]] = []
     for it in threads:
-        mine = _toks_clean(it.text)
         last = groups[-1][-1] if groups else None
         if last and last.meta.get("channel_id") == it.meta.get("channel_id") and bool(last.meta.get("is_dm")) == bool(it.meta.get("is_dm")):
             gap = (when(it) - when(last)) / 60
-            same_people = bool(set(groups[-1][0].meta.get("participants", [])) & set(it.meta.get("participants", [])))
-            ka, kb = set().union(*(set(x.keys) for x in groups[-1])), set(it.keys)
+            same_people = bool(set(last.meta.get("participants", [])) & set(it.meta.get("participants", [])))
+            ka, kb = set(last.keys), set(it.keys)
             keys_ok = not ka or not kb or bool(ka & kb)
-            if gap <= gap_minutes and same_people and keys_ok and len(vocab[-1] & mine) >= 2:
+            shared = toks[last.id] & toks[it.id]
+            rare = shared - common.get(it.meta.get("channel_id", ""), set())
+            if gap <= gap_minutes and same_people and keys_ok and (len(shared) >= 2 or any(len(w) >= 6 for w in rare)):
                 groups[-1].append(it)
-                vocab[-1] |= mine
                 continue
         groups.append([it])
-        vocab.append(set(mine))
     merged: list[Item] = []
     for g in groups:
         if len(g) == 1:
@@ -191,6 +207,9 @@ def ingest(raw: dict[str, Any], cfg: Config, log: ToolLog | None = None) -> Inge
     items, dm_dropped = drop_unconsented(items, cfg.include_dms)
     items, dups = N.dedupe(items)
     items = merge_threads(items)
+    for i in items:  # nothing disappears silently: messages folded into another item are listed with the reason
+        for mid in i.meta.get("merged_ids", []):
+            skipped.append(Skipped(mid, f"merged into the same conversation as {i.title!r}"))
     N.mark_reverted([i for i in items if i.type == "pr"])
     N.mark_reverted_commits([i for i in items if i.type == "commit"])
     counts: dict[str, int] = {}
