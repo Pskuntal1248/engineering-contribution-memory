@@ -77,7 +77,8 @@ def _lab(it: Item) -> str:
 def link_line(it: Item | None) -> str:
     if not it:
         return ""
-    return f"[{_lab(it)}]({it.url})" if it.url else _lab(it)
+    line = f"[{_lab(it)}]({it.url})" if it.url else _lab(it)
+    return f"{line} {FLAG}" if it.meta.get("confidential") else line
 
 
 def _title_key(i: Item) -> str:
@@ -207,7 +208,21 @@ def blocks_sec(heading: str, blocks: list[str], none: str) -> dict[str, Any]:
     return {"heading": heading, "body": "\n\n".join(blocks)} if blocks else {"heading": heading, "body": none}
 
 
+def _drop_covered_commits(ids: list[str], by_id: dict[str, Item]) -> list[str]:
+    """A commit whose key a PR or ticket in the same list already carries (or a revert next to a PR) is shown through that PR or ticket; it stays in the ledger."""
+    pk = {k for i in ids if i in by_id and by_id[i].type in {"pr", "ticket"} for k in by_id[i].keys}
+    has_pr = any(i in by_id and by_id[i].type == "pr" for i in ids)
+    out = []
+    for i in ids:
+        it = by_id.get(i)
+        if it and it.type == "commit" and (set(it.keys) & pk or (has_pr and it.meta.get("is_revert"))):
+            continue
+        out.append(i)
+    return out
+
+
 def _ev(ids: list[str], by_id: dict[str, Item], n: int = 3) -> list[Item]:
+    ids = _drop_covered_commits(ids, by_id)
     ids = sorted((i for i in ids if i in by_id), key=lambda i: (_PRI.get(by_id[i].type, 9), by_id[i].date, i))
     return [by_id[i] for i in ids[:n]]
 
