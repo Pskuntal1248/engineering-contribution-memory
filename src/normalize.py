@@ -108,6 +108,17 @@ def revert_target(title: str, body: str) -> str | None:
     return f"#{n.group(1)}" if n else (m.group(1) or "").strip() or ""
 
 
+def pr_merged_at(raw: dict[str, Any]) -> str:
+    """Merge time from whichever field the gateway fills: merged_at, pull_request.merged_at, or a merged flag plus closed_at."""
+    pr = raw.get("pull_request") if isinstance(raw.get("pull_request"), dict) else {}
+    got = iso(raw.get("merged_at") or pr.get("merged_at"))
+    if got:
+        return got
+    if raw.get("merged") is True or pr.get("merged") is True:
+        return iso(raw.get("closed_at") or pr.get("closed_at"))
+    return ""
+
+
 def normalize_pr(raw: dict[str, Any], repo: str, username: str, projects: Iterable[str] | None = None) -> Item | Skipped:
     num = raw.get("number")
     if num is None:
@@ -119,7 +130,7 @@ def normalize_pr(raw: dict[str, Any], repo: str, username: str, projects: Iterab
     created = iso(raw.get("created_at"))
     if not created:
         return Skipped(iid, "no created_at")
-    merged = iso(raw.get("merged_at"))
+    merged = pr_merged_at(raw)
     closed = iso(raw.get("closed_at"))
     body = raw.get("body") or ""
     title = raw.get("title") or ""
@@ -140,6 +151,8 @@ def normalize_pr(raw: dict[str, Any], repo: str, username: str, projects: Iterab
             "merged_flag": bool(merged), "state": raw.get("state", ""), "size": size, "branch": head,
             "cycle_hours": round((cd - cr).total_seconds() / 3600, 1) if cd and cr and merged else None,
             "is_revert": rev is not None, "reverts": rev, "labels": labels,
+            "paths": [f.get("filename", "") for f in (raw.get("files") or []) if isinstance(f, dict) and f.get("filename")][:15],
+            "merged_basis": raw.get("_merged_basis", "merged_at" if merged else ""),
             "mine": author.lower() == username.lower() or username.lower() in [c.lower() for c in co],
         },
     )
