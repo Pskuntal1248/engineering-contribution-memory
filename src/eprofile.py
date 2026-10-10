@@ -34,12 +34,17 @@ MIN_PROJECT_ITEMS = 2  # a project needs at least 2 linked items
 
 
 async def build(items: list[Item], *, username: str, names: set[str], llm, budget: Budget, framework: str, role_and_level: str,
-                prior: dict[str, Any] | None, repo_aliases: dict[str, str] | None = None) -> dict[str, Any]:
+                prior: dict[str, Any] | None, repo_aliases: dict[str, str] | None = None, embedder=None) -> dict[str, Any]:
     by_id = {i.id: i for i in items}
-    clusters = linking.link(items, repo_aliases or {})
+    dense, enotes = ({}, [])
+    if embedder is not None and items:
+        dense, enotes = await embedder.embed(items)
+    clusters = linking.link(items, repo_aliases or {}, dense=dense or None)
     links = {i: r for c in clusters.values() for i, r in c["links"].items()}
     project_of = {iid: pid for pid, c in clusters.items() for iid in c["item_ids"]}
-    notes: list[str] = []
+    notes: list[str] = list(enotes)
+    if embedder is not None and dense:
+        notes.append(f"topic grouping used embeddings ({embedder.calls} calls to the Gravity endpoint) plus keywords")
     prior_ver = (prior or {}).get("verdicts", {})
 
     # invisible work / thread verdicts (model only for threads we have no verdict for)
