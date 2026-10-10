@@ -130,7 +130,8 @@ def make_graph(deps: Deps):
                     why[sk.reason] = why.get(sk.reason, 0) + 1
                 notes.append(f"{len(ing.skipped)} rows not counted: " + "; ".join(f"{n} x {r}" for r, n in sorted(why.items(), key=lambda kv: -kv[1])))
             if ing.not_found_channels:
-                failed += [{"source": f"slack:#{c}", "error": "channel not found"} for c in ing.not_found_channels]
+                known = {f.get("source") for f in failed}
+                failed += [{"source": f"slack:#{c}", "error": "channel not found"} for c in ing.not_found_channels if f"slack:#{c}" not in known]
         else:
             items = old
         ctx["items"], ctx["new_ids"], ctx["failed"] = items, new_ids, failed
