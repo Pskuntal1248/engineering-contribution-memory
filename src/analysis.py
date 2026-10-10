@@ -271,9 +271,29 @@ def map_skills(items: list[Item]) -> list[dict[str, Any]]:
                 ids.append(i.id)
         if len(ids) >= 2 or (len(ids) == 1 and (re.search(pat, next(i.title for i in items if i.id == ids[0]), re.I) or next(i.type for i in items if i.id == ids[0]) == "thread")):
             by = {i.id: i for i in items}
-            work = {(by[x].keys[0] if by[x].keys else re.sub(r"^[A-Z][A-Z0-9]+-\d+[:\s-]*", "", by[x].title).strip().lower()) for x in ids}  # a PR, its ticket and commits are one piece of work
+            work = _distinct_work([by[x] for x in ids])  # a PR, its ticket and its commits are one piece of work
             out.append({"skill": skill, "count": len(work), "evidence": sorted(ids, key=lambda x: (_RANK.get(by[x].type, 9), x))[:6]})
     return sorted(out, key=lambda d: (-d["count"], d["skill"]))
+
+
+def _distinct_work(its: list[Item]) -> set[str]:
+    """Distinct pieces of work: items that share any ticket key (a PR, its ticket, commits that name an old key) are one; keyless items go by title."""
+    parent: dict[str, str] = {}
+
+    def find(x: str) -> str:
+        while parent.setdefault(x, x) != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    for i in its:
+        ks = list(i.keys) or ["title:" + re.sub(r"^[A-Z][A-Z0-9]+-\d+[:\s-]*", "", i.title).strip().lower()]
+        m = re.match(r"^([A-Z][A-Z0-9]+-\d+)\b", i.title)
+        if m:
+            ks.append(m.group(1))
+        for k in ks[1:]:
+            parent[find(k)] = find(ks[0])
+        find(ks[0])
+    return {find(k) for k in parent}
 
 
 # --------------------------------------------------------------------------- model passes
