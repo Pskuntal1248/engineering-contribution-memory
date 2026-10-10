@@ -128,3 +128,24 @@ def test_notion_profile_and_untitled_pages_are_not_counted_as_docs():
     assert isinstance(N.normalize_doc({"id": "1", "title": "Parth Singh", "body": ""}, "notion", ["Parth Singh"]), N.Skipped)
     assert isinstance(N.normalize_doc({"id": "2", "title": "", "body": "x"}, "notion", []), N.Skipped)
     assert isinstance(N.normalize_doc({"id": "3", "title": "Design: ranking", "body": "text", "modified": "2026-09-01"}, "notion", ["Parth Singh"]), Item)
+
+
+def test_error_text_is_clean_and_pr_and_ticket_share_one_evidence_line():
+    from adapters import explain
+    from outputs import block
+    msg = explain("docs:confluence", 'tool said: {"code":401,"message":"Unauthorized; scopes are insufficient for this call","details":"x"}')
+    assert "Unauthorized; scopes are insufficient for this call" in msg and not msg.rstrip(").").endswith("s")
+    pr_, tk = pr(6, "AUTH-1", "Add session token refresh"), ticket("AUTH-1", "Add session token refresh")
+    out = block("Project", "One sentence.", items=[pr_, tk])
+    assert out.count("Add session token refresh") == 1 and "[PR #6](" in out and "[ticket](" in out
+    assert out.split("\n\n")[0] == "**Project**" and out.split("\n\n")[1] == "One sentence."
+
+
+def test_messages_folded_into_a_conversation_are_listed_as_not_counted():
+    from pipeline import Config, ingest
+    msgs = lambda ts, t: {"ts": ts, "user": "U1", "text": t}
+    raw = {"slack": {"channels": [{"id": "G1", "name": "uc10-test"}], "my_user_ids": ["U1"], "threads": [
+        {"channel": "uc10-test", "channel_id": "G1", "messages": [msgs("1791641890.36", "the payout batch window timezone is wrong")]},
+        {"channel": "uc10-test", "channel_id": "G1", "messages": [msgs("1791641922.86", "fixed the payout batch window timezone")]}]}}
+    ing = ingest(raw, Config(username="u", repos=[], slack_channels=["uc10-test"]))
+    assert len([i for i in ing.items if i.type == "thread"]) == 1 and any("merged into the same conversation" in s.reason for s in ing.skipped)
