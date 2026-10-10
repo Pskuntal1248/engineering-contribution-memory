@@ -242,3 +242,32 @@ def test_project_names_are_reused_from_the_backfill_in_later_modes():
     again = mk(True, {"cards": stored})
     assert [p["name"] for p in again["projects"]] == ["Saved " + p["name"] for p in first["projects"]]
     assert [p["name"] for p in mk(False, {"cards": stored})["projects"]] == [p["name"] for p in first["projects"]]  # a backfill renames freely
+
+
+def test_one_doc_fetch_failing_never_drops_the_doc_and_the_error_is_unwrapped():
+    import asyncio
+    from adapters import fetch_notion
+    from guards import ToolLog, err_text
+    assert "boom" in err_text(ExceptionGroup("unhandled errors in a TaskGroup", [RuntimeError("boom")]))
+
+    async def call(name, args):
+        if name == "notion.list_users":
+            return {"results": [{"id": "u1", "name": "Parth Singh", "type": "person", "object": "user"}]}
+        if name == "notion.search_notion_page":
+            return {"results": [{"id": "p1", "url": "https://n/p1", "last_edited_time": "2026-10-01T10:00:00Z", "created_time": "2026-10-01T10:00:00Z",
+                                 "created_by": {"id": "u1"}, "last_edited_by": {"id": "u1"}, "properties": {"Name": {"type": "title", "title": [{"plain_text": "Design: Payout reconciliation job"}]}}}]}
+        raise ExceptionGroup("unhandled errors in a TaskGroup", [RuntimeError("503 upstream timeout")])
+    out = {"docs": [], "failed": [], "capped": []}
+    asyncio.run(fetch_notion(call, "2026-01-01T00:00:00Z", ToolLog(), out, ["Parth Singh"]))
+    assert len(out["docs"]) == 1 and out["docs"][0]["body_failed"]
+    assert out["failed"] and "503 upstream timeout" in out["failed"][0]["error"] and "TaskGroup" not in out["failed"][0]["error"]
+    d = N.normalize_doc(out["docs"][0], "notion", ["Parth Singh"])
+    assert isinstance(d, Item) and d.title.startswith("Design: Payout")
+
+
+def test_technical_design_skill_cites_the_design_doc_before_the_adr_pr():
+    from analysis import map_skills
+    adr = Item(id="a", source="github", type="pr", date="2026-09-01", title="docs: ADR-001 move webhooks to a queue", text="ADR design decision", meta={"mine": True})
+    doc = Item(id="d", source="doc", type="doc", date="2026-09-02", title="Design: Search ranking approach", text="design doc for ranking decision", meta={"mine": True})
+    sk = {k["skill"]: k for k in map_skills([adr, doc])}
+    assert sk["technical design"]["evidence"][0] == "d"
