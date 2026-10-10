@@ -24,9 +24,12 @@ def outputs_id(n: str) -> bool:
 
 def compact(it: Item, project: str) -> dict[str, Any]:
     m = it.meta
-    keep = {k: m[k] for k in ("mine", "confidential", "repo", "number", "merged_flag", "reverted", "is_revert", "received", "reopen_count", "status", "channel", "merged_ids", "state", "my_messages", "generated_only", "cycle_hours", "participants", "paths") if k in m}
+    keep = {k: m[k] for k in ("mine", "confidential", "repo", "number", "merged_flag", "reverted", "is_revert", "received", "reopen_count", "status", "channel", "merged_ids", "state", "my_messages", "generated_only", "docs_only", "cycle_hours", "participants", "paths") if k in m}
     if it.type in {"doc", "pr"} and analysis._DECISION.search(it.text or ""):
         keep["decision_text"] = True  # the stored text is cut short; remember that the full text had decision wording
+    if analysis.is_decision_candidate(it):  # the stored text is cut short, so keep the decision sentence and owner from the full text
+        keep["dsum"] = analysis.decision_sentence(it.text)
+        keep["owner"] = analysis.decision_owner(it.text)
     if it.type in {"doc", "pr"} and analysis.NEEDS_DECISION.search(it.text or ""):
         keep["needs_decision"] = True
     keep["size"] = (m.get("size") or {}).get("lines") if m.get("size") else None
@@ -41,6 +44,9 @@ def expand(row: dict[str, Any]) -> Item:
     if row["t"] == "pr" and "generated_only" not in m:  # memory saved before the flag was stored: judge from the title
         import normalize
         m["generated_only"] = bool(normalize._LOCK_WORDS.search(row.get("title", "")))
+    if row["t"] == "pr" and "docs_only" not in m:
+        import normalize
+        m["docs_only"] = normalize.docs_only_pr(None, row.get("title", ""))
     return Item(id=row["id"], source=row["s"], type=row["t"], date=row["date"], title=row["title"], url=row["url"], text=row["text"],
                 author=row.get("author", ""), co_authors=row.get("co", []), keys=row.get("keys", []), meta=m)
 
@@ -49,7 +55,7 @@ MIN_PROJECT_ITEMS = 2  # a project needs at least 2 linked items
 
 
 async def build(items: list[Item], *, username: str, names: set[str], llm, budget: Budget, framework: str, role_and_level: str,
-                prior: dict[str, Any] | None, repo_aliases: dict[str, str] | None = None, embedder=None, team_changes: list[tuple[str, str]] | None = None) -> dict[str, Any]:
+                prior: dict[str, Any] | None, repo_aliases: dict[str, str] | None = None, embedder=None, team_changes: list[tuple[str, str]] | None = None, reuse_names: bool = False) -> dict[str, Any]:
     by_id = {i.id: i for i in items}
     dense, enotes = ({}, [])
     if embedder is not None and items:
@@ -84,6 +90,17 @@ async def build(items: list[Item], *, username: str, names: set[str], llm, budge
     base = [analysis.baseline_project_card(pid, c["item_ids"], by_id, username) for pid, c in sorted(clusters.items()) if is_project(c)]
     cards, n2 = await analysis.project_cards_with_model(llm, budget, base, by_id, username)
     notes += n2
+    # One name per project in every mode: a backfill saves each project's name and goal with a few of its item keys; later runs
+    # give a project the saved name and goal of the saved project it overlaps most, instead of a new model wording.
+    saved = (prior or {}).get("cards", []) if reuse_names else []
+    for card in cards:
+        mine_k = {id_key(e) for e in card["evidence"]}
+        best = max(saved, key=lambda s_: len(mine_k & set(s_.get("ev", []))), default=None)
+        if best and len(mine_k & set(best.get("ev", []))) >= max(1, min(len(mine_k), len(best.get("ev", []))) // 2):
+            card["name"] = best["name"]
+            if best.get("goal"):
+                card["goal"] = best["goal"]
+    card_store = [{"ev": sorted({id_key(e) for e in c["evidence"]})[:14], "name": c["name"], "goal": c.get("goal", "")[:200]} for c in cards]
     for card in cards:
         prs = [by_id[e] for e in card["evidence"] if by_id[e].type == "pr"]
         card["co_contributors"] = [n for n in {p for e in card["evidence"] for p in ([by_id[e].author] + by_id[e].co_authors)} if n and n.lower() != username.lower() and n not in names and not outputs_id(n)][:6]
@@ -116,7 +133,7 @@ async def build(items: list[Item], *, username: str, names: set[str], llm, budge
     return {
         "projects": projects_clean, "invisible": invisible, "decisions": decisions, "skills": skills, "improvements": improv,
         "gaps": gaps, "stats": stats, "notes": notes, "project_of": {i: p for i, p in project_of.items() if p in {c["project_id"] for c in projects_clean}},
-        "verdicts": {k: v.model_dump() for k, v in allv.items()},
+        "verdicts": {k: v.model_dump() for k, v in allv.items()}, "card_store": card_store,
         "confidential": sorted(confidential_ids(items)),
         "top": [{"id": i.id, "title": i.title, "lines": metrics.contribution_size(i)} for i in metrics.top_contributions(items, 8)],
     }
