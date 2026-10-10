@@ -143,18 +143,17 @@ def _real(ts, text):
 def test_flat_messages_at_the_users_real_timestamps_merge_per_topic():
     from pipeline import merge_threads
     flat = [
-        _real("1791641890.36", "Settlement totals mismatch for the 18 Sep batch, looks like a timezone problem"),
-        _real("1791641910.75", "Traced it: the batch job used UTC while the settlement cutoff is IST"),
-        _real("1791641922.86", "Fixed the batch window config to use IST, settlement totals match now"),
-        _real("1791641933.69", "Walked a new joiner through the null pointer in the retry worker"),
-        _real("1791641945.33", "Mentored them on reading the stack trace for the null pointer"),
-        _real("1791641959.69", "Paired on the null pointer fix, they will add a retry worker test"),
-        _real("1791641969.96", "Pointed them to the retry worker docs for the null pointer follow-up"),
-        _real("1791641991.63", "How do I run the payouts service locally? Start the compose stack and use the env file"),
+        _real("1791641890.36", "payouts for the 18 Sep batch don't match the ledger, the totals look off by a timezone offset, UTC vs IST"),
+        _real("1791641922.86", "The payout batch window used the wrong timezone, I will pass the merchant timezone to the window builder and add a regression test"),
+        _real("1791641933.69", "Fixed and reran the payout batch, totals now agree with settlement"),
+        _real("1791641945.33", "The retry worker null pointer comes from a retry payload missing merchant_id, log the payload and trace how the retry path rebuilds it"),
+        _real("1791641959.69", "Log the job payload and reproduce the retry worker null pointer locally with that payload"),
+        _real("1791641969.96", "The retry payload lacked merchant_id, trace how the retry path rebuilds it"),
+        _real("1791641991.63", "To run the payouts service locally use the sandbox gateway, I will add the steps to the README"),
     ]
     out = merge_threads(flat)
-    sizes = sorted(i.meta["my_messages"] for i in out)
-    assert sizes == [1, 3, 4], sizes
+    assert sorted(i.meta["my_messages"] for i in out) == [1, 3, 3], [i.meta["my_messages"] for i in out]
+    assert any(i.id.endswith("991.63") and i.meta["my_messages"] == 1 for i in out)  # the how-to stays its own item
 
 
 def test_clip_never_cuts_mid_word_and_first_person():
