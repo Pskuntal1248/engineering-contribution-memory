@@ -75,17 +75,25 @@ def adf_text(node: Any) -> str:
     return ""
 
 
+def _tool_msg(err: str) -> str:
+    """The readable part of a tool error: the JSON "message" when there is one, else the text, cut at a word."""
+    from guards import clip
+    m = re.search(r'"message"\s*:\s*"([^"]+)"', err or "")
+    return clip((m.group(1) if m else err or "").strip(), 100)
+
+
 def explain(source: str, err: str) -> str:
     """A reason a person can act on, from a tool error."""
     e = (err or "").lower()
+    tm = _tool_msg(err or "")
     name = source.split(":")[-1].capitalize()
     if any(k in e for k in ("not enabled", "not installed", "no confluence", "not licensed", "unavailable", "no such app", "not available")):
-        return f"{name} is not enabled on this site or workspace (tool said: {err[:100]}). Remove it from docs_source or enable it."
+        return f"{name} is not enabled on this site or workspace (tool said: {tm}). Remove it from docs_source or enable it."
     if any(k in e for k in ("needs_reconnect", "reconnect", "unauthor", "401", "403", "forbidden", "not connected", "no connection", "no account")):
-        return f"{name} is not connected, or the connection needs renewing: run gravity connect for it (tool said: {err[:100]})"
+        return f"{name} is not connected, or the connection needs renewing: run gravity connect for it (tool said: {tm})"
     if "404" in e or "not found" in e:
-        return f"{name} was not found at that site (tool said: {err[:100]})"
-    return f"{name} could not be read: {err[:150]}"
+        return f"{name} was not found at that site (tool said: {tm})"
+    return f"{name} could not be read: {tm}"
 
 
 def failed_payload(data: Any) -> str:
