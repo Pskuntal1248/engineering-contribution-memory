@@ -331,3 +331,62 @@ def test_review_decision_statement_does_not_repeat_the_title_and_empty_period_sa
     it = Item(id="x", source="github", type="pr", date="2026-10-10", title="t", meta={})
     assert "2026-10-10" in _empty_period([it], "2026-04-01", "2026-09-30")
     assert _empty_period([it], "", "") == "None found in this period."
+
+
+def test_saved_decision_wording_is_reused_without_a_model_call_and_embed_calls_count():
+    import asyncio
+    from eprofile import build
+    from guards import budget_for
+    from analysis import DecisionVerdict
+    doc = Item(id="doc:notion:p1", source="doc", type="doc", date="2026-10-01", title="Design: Payout reconciliation job", url="https://n/p1", author="Parth Singh",
+               text="Decision: run nightly as a queue-backed job.", meta={"mine": True, "owner": "Parth Singh"})
+    calls = []
+
+    class LLM:
+        async def structured(self, schema, system, payload, budget=None):
+            calls.append(schema.__name__)
+            raise AssertionError("no model call expected for an already saved decision")
+    prior = {"dverdicts": {doc.id: DecisionVerdict(item_id=doc.id, is_decision=True, summary="We will run reconciliation nightly as a queue-backed job.").model_dump()}}
+    prof = asyncio.run(build([doc], username="Pskuntal1248", names={"Parth Singh", "Pskuntal1248"}, llm=LLM(), budget=budget_for("on_demand"), framework="", role_and_level="", prior=prior))
+    assert not [c for c in calls if c == "DecisionVerdicts"]
+    assert prof["decisions"] and prof["decisions"][0]["summary"].startswith("We will run reconciliation") and doc.id in prof["dverdicts"]
+
+
+def test_saved_project_cards_are_matched_one_to_one_by_any_shared_item_and_skip_the_model():
+    import asyncio
+    from test_real_output import WORK, FOUR, NAMES, ME
+    from eprofile import build
+    from guards import budget_for
+    items = WORK + FOUR
+    first = asyncio.run(build(items, username=ME, names=NAMES, llm=None, budget=budget_for("backfill"), framework="", role_and_level="", prior=None))
+    calls = []
+
+    class LLM:
+        async def structured(self, schema, system, payload, budget=None):
+            calls.append(schema.__name__)
+            raise RuntimeError("model unavailable")
+    run = lambda stored: asyncio.run(build(items, username=ME, names=NAMES, llm=LLM(), budget=budget_for("on_demand"), framework="", role_and_level="", prior={"cards": stored, "dverdicts": {}}, reuse_names=True))
+    full = [dict(c, name=f"Saved {n}", outcome=f"Saved outcome {n}") for n, c in enumerate(first["card_store"])]
+    again = run(full)
+    assert "ProjectCards" not in calls  # nothing new in any project: no model call for cards
+    assert sorted(p["name"] for p in again["projects"]) == sorted(f"Saved {n}" for n in range(len(full)))
+    assert sorted(p["outcome"] for p in again["projects"]) == sorted(f"Saved outcome {n}" for n in range(len(full)))
+    part = [dict(c, name=f"Saved {n}", ev=c["ev"][:1]) for n, c in enumerate(first["card_store"])]  # only one shared item each
+    assert sorted(p["name"] for p in run(part)["projects"]) == sorted(f"Saved {n}" for n in range(len(part)))
+
+
+def test_an_item_a_backfill_put_in_a_project_stays_there_when_re_linking_drops_it():
+    import asyncio
+    from test_real_output import WORK, FOUR, NAMES, ME
+    from eprofile import build
+    from guards import budget_for
+    items = WORK + FOUR
+    first = asyncio.run(build(items, username=ME, names=NAMES, llm=None, budget=budget_for("backfill"), framework="", role_and_level="", prior=None))
+    pay = next(first["project_of"][i.id] for i in items if i.type == "pr" and "PAY" in i.title)
+    odd = Item(id="slack:odd", source="slack", type="thread", date="2026-10-10", title="zzz qqq", text="zzz qqq xxx", meta={"mine": True, "saved_project": pay})
+    for i in items:
+        i.meta["saved_project"] = first["project_of"].get(i.id, "")
+    second = asyncio.run(build(items + [odd], username=ME, names=NAMES, llm=None, budget=budget_for("on_demand"), framework="", role_and_level="", prior=None, reuse_names=True))
+    assert second["project_of"].get("slack:odd") == pay
+    third = asyncio.run(build(items + [odd], username=ME, names=NAMES, llm=None, budget=budget_for("backfill"), framework="", role_and_level="", prior=None))
+    assert "slack:odd" not in third["project_of"]  # a backfill links from scratch
