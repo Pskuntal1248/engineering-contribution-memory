@@ -215,6 +215,6 @@ async def graph():
     embedder = GatewayEmbedder(os.environ["GRAVITY_LLM_URL"], token)
 
     def source_factory(cfg: Config):
-        return GatewaySource(call, cfg.username, cfg.repos, cfg.slack_channels, cfg.include_dms, cfg.jira_projects, has, cfg.docs_sources)
+        return GatewaySource(call, cfg.username, cfg.repos, cfg.slack_channels, cfg.include_dms, cfg.jira_projects, has, cfg.docs_sources, cfg.name_hints)
 
     return make_graph(Deps(source_factory, llm, embedder=embedder))
