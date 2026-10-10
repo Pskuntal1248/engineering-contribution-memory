@@ -29,7 +29,7 @@ def commit(sha, title):
 
 def thread(i, minute, text, keys=()):
     return Item(id=f"slack:G1:17900{i}.000100", source="slack", type="thread", date=f"2026-10-10T09:{minute:02d}:00Z", title="#uc10-test thread", url=f"https://s/p{i}",
-                text=f"Parth Singh: {text}\nParth Singh: more detail in a reply so the thread has two messages", author="Parth Singh", keys=list(keys),
+                text=f"Parth Singh: {text}\nParth Singh: note{i}x{i}", author="Parth Singh", keys=list(keys),
                 meta={"channel": "uc10-test", "channel_id": "G1", "messages": 2, "my_messages": 2, "participants": ["Parth Singh"], "mine": True})
 
 
@@ -103,3 +103,28 @@ def test_profile_page_has_all_seven_sections_even_when_empty_and_the_ledger_is_l
 def test_placeholder_phrases_and_double_periods_never_show():
     from outputs import no_placeholders
     assert no_placeholders("An initial commit and a README update are recorded; further outcome not stated..") == "An initial commit and a README update are recorded."
+
+
+def test_slack_items_get_a_real_title_and_link_and_the_page_has_blocks_with_links_on_their_own_line():
+    import normalize as N
+    msgs = [{"ts": "1791641890.36", "user": "U1", "text": "Settlement totals mismatch for the 18 Sep batch, looks like a timezone problem"}]
+    it = N.normalize_thread("uc10-test", "G1", msgs, {"U1"}, "https://the-glider.slack.com")
+    assert it.title == "Settlement totals mismatch for the 18 Sep batch" and it.url == "https://the-glider.slack.com/archives/G1/p179164189036"
+    assert N.normalize_thread("uc10-test", "G1", msgs, {"U1"}).url.startswith("https://slack.com/app_redirect?channel=G1&message_ts=")
+    items = merge_threads(WORK + [Item(**t.__dict__) for t in FOUR])
+    corpus, _ = corpus_for("backfill", profile(items), items, title="t", terms=set(), keep_internal=False, colleagues=[], names=NAMES,
+                           date_from="", date_to="", run_notes=[], failed=[], quiet_line=None, new_ids=set())
+    from outputs import to_markdown
+    md = to_markdown(corpus, with_tables=False)
+    assert "\n\n**" in md and "\n[" in md and "the user" not in md.lower()
+    solved = next(s for s in corpus["sections"] if s["heading"] == "Problems solved")["body"]
+    inv = next(s for s in corpus["sections"] if s["heading"] == "Invisible work")["body"]
+    assert "Details are under Problems solved" in inv and "Settlement totals" not in inv  # the same thread is not repeated verbatim
+    assert "Settlement totals" in solved
+
+
+def test_notion_profile_and_untitled_pages_are_not_counted_as_docs():
+    import normalize as N
+    assert isinstance(N.normalize_doc({"id": "1", "title": "Parth Singh", "body": ""}, "notion", ["Parth Singh"]), N.Skipped)
+    assert isinstance(N.normalize_doc({"id": "2", "title": "", "body": "x"}, "notion", []), N.Skipped)
+    assert isinstance(N.normalize_doc({"id": "3", "title": "Design: ranking", "body": "text", "modified": "2026-09-01"}, "notion", ["Parth Singh"]), Item)
