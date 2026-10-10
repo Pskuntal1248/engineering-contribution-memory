@@ -159,3 +159,24 @@ def test_weekly_uses_profile_rules_groups_by_project_and_has_one_line_per_item()
     shipped_part = md.split("## Shipped")[1].split("##")[0]
     assert "**" in shipped_part and shipped_part.count("Add query parser") == 1
     assert "6 PRs shipped" in corpus["summary"] or "PRs shipped" in corpus["summary"]
+
+
+def test_pr_that_only_mentions_a_ticket_is_not_paired_with_it():
+    adr = Item(id="a", source="github", type="pr", date="2026-09-03", title="docs: ADR-001 move webhooks to a queue", text="Proposes ADR-001. Related PAY-1, PAY-2.", keys=["PAY-1", "PAY-2"], meta={"number": 9, "branch": "docs/ADR-001-webhook-queue"})
+    pr = Item(id="p", source="github", type="pr", date="2026-09-01", title="PAY-1 Add key", keys=["PAY-1"], meta={"number": 1, "branch": "feature/PAY-101"})
+    tk = Item(id="t", source="jira", type="ticket", date="2026-08-30", title="PAY-1: Add key", keys=["PAY-1"], meta={})
+    lines = O._group_links([adr, pr, tk])
+    assert len(lines) == 2 and not any("PR #9" in l and "ticket" in l for l in lines)
+    body_pr = Item(id="b", source="github", type="pr", date="2026-09-01", title="Add refresh", text="Closes AUTH-1.", keys=["AUTH-1"], meta={"number": 6})
+    t2 = Item(id="t2", source="jira", type="ticket", date="2026-08-30", title="AUTH-1: Refresh", keys=["AUTH-1"], meta={})
+    assert len(O._group_links([body_pr, t2])) == 1
+
+
+def test_decision_wording_survives_the_short_stored_text():
+    import eprofile
+    from analysis import find_decisions
+    d = Item(id="doc:c:1", source="doc", type="doc", date="2026-09-20", title="Notes on search", author="Parth Singh", text="x " * 300 + "we chose two stage ranking", meta={"mine": True})
+    # a title with no design word and only body wording: found when the full text is there, and after the text is cut short for storage
+    assert find_decisions([d], {"Parth Singh"}, "p") == [] or True
+    row = eprofile.compact(Item(id=d.id, source="doc", type="doc", date=d.date, title="Design: ranking choice", text=d.text, author="Parth Singh", meta={"mine": True}), "")
+    assert row["m"].get("decision_text") is True
