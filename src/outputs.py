@@ -187,5 +187,6 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
     result = {"title": title, "mode": kind, "stats": s, "projects": len(profile["projects"]), "invisible_work": len(profile["invisible"]),
               "decisions": len(profile["decisions"]), "improvement_areas": [a["label"] for a in profile["improvements"]],
               "evidence_gaps": [{"expectation": g["expectation"], "status": g["status"]} for g in profile["gaps"]],
-              "unavailable": [f["source"] for f in failed], "notes": run_notes, "ledger_rows": len(rows)}
+              "unavailable": list(dict.fromkeys(f["source"] for f in failed)),
+              "unavailable_reasons": list({f["source"]: f.get("error", "") for f in failed}.items()), "notes": run_notes, "ledger_rows": len(rows)}
     return corpus, result
