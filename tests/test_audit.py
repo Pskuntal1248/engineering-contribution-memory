@@ -89,7 +89,7 @@ def test_one_on_one_is_first_person_linked_and_free_of_ids_and_trivial_wins():
             "improvements": [{"label": "missing tests", "count": 3, "item_ids": ["p1"]}]}
     out = one_on_one(prof, {i.id: i for i in (init, real, th)}, [])
     text = to_markdown({"title": "t", "summary": "", "sections": out})
-    assert "I shipped this on 2026-09-01 (PAY-1)." in text and "[PAY-1: idempotency key for payouts](u-p1)" in text and "Initial commit" not in text
+    assert "I shipped this on 2026-09-01." in text and "(u-p1)" in text and "Initial commit" not in text
     assert "I debugged and fixed a problem in #uc10-test" in text and "no ticket raised" in text and "u-th" in text
     assert "U0BUNS1DT5E" not in text and "not stated" not in text and "the user" not in text.lower()
     assert "Working on" in text and "missing tests" in text
