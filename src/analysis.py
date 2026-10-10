@@ -123,6 +123,7 @@ def find_invisible(items: list[Item], links: dict[str, list[str]], display_names
 
 
 _DECISION_WORDS = re.compile(r"\b(adr|rfc|design docs?|design proposal|proposal|decision records?|decision)\b", re.I)
+NEEDS_DECISION = re.compile(r"\b(needs?|needing|awaiting|pending|requires?)\s+(a\s+|an\s+|the\s+)?(decision|approval|sign[- ]?off|call)\b|\bto be decided\b|\bopen question\b", re.I)
 _DECISION_PATH = re.compile(r"(^|/)(adrs?|rfcs?|decisions?)/|(^|/)docs/design/", re.I)
 _STRONG_WORDS = re.compile(r"\b(adr(-?\d+)?|rfc(-?\d+)?|design docs?|architecture decision records?)\b", re.I)
 
@@ -142,6 +143,8 @@ def is_strong_decision(it: Item) -> bool:
     if not is_decision_candidate(it):
         return False
     hay = " ".join([it.title, " ".join(it.meta.get("labels", []) or []), str(it.meta.get("branch", ""))])
+    if it.type == "doc" and re.search(r"\b(design|architecture)\b", it.title, re.I):
+        return True  # a design page the user wrote records a design choice; this must not depend on the stored text length
     return bool(_STRONG_WORDS.search(hay) or any(_DECISION_PATH.search(p) for p in it.meta.get("paths", []) or []))
 
 
