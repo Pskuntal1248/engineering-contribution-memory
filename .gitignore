@@ -5,3 +5,4 @@ build/
 .gravity/
 requirements.lock
 .pytest_cache/
+out/
