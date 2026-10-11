@@ -84,12 +84,14 @@ def make_graph(deps: Deps):
             store = PlatformStore(ps, mem) if ps is not None else NativeMemoryStore(mem, 256)
         prior = await store.aload() if hasattr(store, "aload") else store.load()
         req = str(inp.get("request") or "auto")
+        if req == "weekly_update":
+            req = "auto"  # the dropdown default: the first run backfills, every later run is the weekly update (new items only)
         said, d1, d2 = parse_request(str(inp.get("ask") or inp.get("message") or ""), deps.now().date())  # "message" is how a follow-up request typed under a finished run arrives
         if said and req == "auto":
             req = said  # the typed request wins over the dropdown's default
-        if d1 or d2:
-            inp["period_from"] = str(inp.get("period_from") or d1)
-            inp["period_to"] = str(inp.get("period_to") or d2)
+        if not (str(inp.get("period_from") or "").strip() or str(inp.get("period_to") or "").strip()):
+            if d1 or d2:  # dates typed in words are used only when the two date inputs are empty
+                inp["period_from"], inp["period_to"] = d1, d2
         has_memory = bool(prior.get("items") or prior.get("last_run"))  # an empty but completed run still counts
         if req == "auto":
             req = "weekly" if prior.get("backfill_done") else "backfill"  # weekly only after a backfill really completed
