@@ -6,7 +6,7 @@ import csv
 import io
 
 from guards import TRIVIAL_TITLE
-from models import Item
+from models import Item, day
 from metrics import shipped
 
 def _short90(t: str) -> str:
@@ -45,7 +45,7 @@ def rows(items: list[Item], project_of: dict[str, str], cap: int | None = None) 
     truncated = cap is not None and len(ordered) > cap
     if truncated:
         ordered = ordered[-cap:]  # keep the newest
-    return [[i.source, i.date[:10], project_of.get(i.id, "(unlinked)"), i.type, _short90(i.title), i.url, counted_label(i)] for i in ordered], truncated
+    return [[i.source, day(i), project_of.get(i.id, "(unlinked)"), i.type, _short90(i.title), i.url, counted_label(i)] for i in ordered], truncated
 
 
 def to_csv(table_rows: list[list[str]]) -> str:
