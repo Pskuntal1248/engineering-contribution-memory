@@ -129,7 +129,7 @@ def text_of(data: Any, depth: int = 0) -> str:
     return ""
 
 
-_NO_RETRY = ("401", "403", "404", "scope", "unauthor", "forbidden", "not enabled", "not found", "not connected", "permission")
+_NO_RETRY = ("time limit", "401", "403", "404", "scope", "unauthor", "forbidden", "not enabled", "not found", "not connected", "permission")
 
 
 async def _gather(sem: asyncio.Semaphore, call: Call, name: str, args: dict) -> Any:
