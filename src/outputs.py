@@ -84,7 +84,7 @@ def _lab(it: Item) -> str:
 def link_line(it: Item | None) -> str:
     if not it:
         return ""
-    line = f"[{_lab(it)}]({it.url})" if it.url else _lab(it)
+    line = f"{_lab(it)} - {it.url}" if it.url else _lab(it)  # the page shows body text as plain text (guide 5.3): a bare URL stays readable and can be opened
     return f"{line} {FLAG}" if it.meta.get("confidential") else line
 
 
@@ -121,7 +121,7 @@ def _group_links(items: list[Item]) -> list[str]:
             nm = names.get(i.type, i.type)
             if i.type == "pr" and i.meta.get("number"):
                 nm = f"PR #{i.meta['number']}"
-            lab.append(f"[{nm}]({i.url})" if i.url else nm)
+            lab.append(f"{nm} - {i.url}" if i.url else nm)
         out.append(f"{_lab(g[0])}: " + ", ".join(lab))
     return out
 
@@ -144,7 +144,7 @@ def block(title: str, sentence: str = "", facts: list[str] | None = None, items:
         lines = _group_links(its)[:10]
         if len(its) == 1 and _same_title(title, its[0]):  # the heading already is the title: one source link, no repeated title
             nm = {"pr": "PR", "ticket": "ticket", "commit": "commit", "doc": "doc", "thread": "Slack conversation", "review": "review"}.get(its[0].type, "source")
-            paras.append((f"[Source: {nm}]({its[0].url})" if its[0].url else f"Source: {nm}") + (f" {FLAG}" if its[0].meta.get("confidential") else ""))
+            paras.append((f"Source: {nm} - {its[0].url}" if its[0].url else f"Source: {nm}") + (f" {FLAG}" if its[0].meta.get("confidential") else ""))
         elif len(lines) == 1 and not facts:
             one = lines[0]
             if len(its) > 1 and ": " in one and any(_same_title(title, x) for x in its):
@@ -539,7 +539,7 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
         wd = sum(1 for d in profile["decisions"] if any(e in new_ids for e in d["evidence"]))
         summary_text = f"{wp} PR{'' if wp == 1 else 's'} shipped, {wi} piece{'' if wi == 1 else 's'} of invisible work, {wd} decision{'' if wd == 1 else 's'} in this window. Every item below links to its source."
     corpus = {"title": title, "summary": summary_text,
-              "sections": sections, "sources": sources_for(items)}
+              "sections": sections}  # no "sources" list: the page would number every item again (id, title, URL) under the report; links are in the body and the ledger table
     corpus = _clean_obj(corpus)
     result = {"title": title, "mode": kind, "stats": s, "projects": len(profile["projects"]), "invisible_work": len(profile["invisible"]),
               "decisions": len(profile["decisions"]), "improvement_areas": [a["label"] for a in profile["improvements"]],
