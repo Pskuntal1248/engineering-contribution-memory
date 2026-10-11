@@ -41,6 +41,15 @@ def parse_request(text: str, today: date) -> tuple[str, str, str]:
     return mode, d_from, d_to
 
 
+def in_weekly_window(now) -> bool:
+    """True on Friday 16:45-18:30 India time: the weekly schedule (cron 0 17 * * 5, India time) fires inside it."""
+    from datetime import timezone
+    from zoneinfo import ZoneInfo
+    t = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
+    t = t.astimezone(ZoneInfo("Asia/Kolkata"))
+    return t.weekday() == 4 and (16 * 60 + 45) <= t.hour * 60 + t.minute <= (18 * 60 + 30)
+
+
 def parse_team_changes(text: str) -> list[tuple[str, str]]:
     """Lines like "2026-07-01: Platform team" -> [("2026-07-01", "Platform team")], sorted by date."""
     out = []
