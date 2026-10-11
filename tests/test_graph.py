@@ -99,20 +99,10 @@ def test_date_inputs_win_over_words_in_ask():
     assert words["result"]["mode"] == "review_material"
 
 
-def test_scheduled_friday_run_makes_weekly_update_even_if_saved_request_is_on_demand(monkeypatch):
-    from datetime import datetime, timezone
+def test_saved_request_decides_the_mode_and_weekly_update_is_the_default():
     first = run(INP, {}, W1, E["week2_start"])
-    fri_1700_ist = datetime(2026, 10, 9, 11, 30, tzinfo=timezone.utc)   # Friday 17:00 India time
-    sat_1700_ist = datetime(2026, 10, 10, 11, 30, tzinfo=timezone.utc)  # Saturday
-    monkeypatch.delenv("GRAVITY_UNATTENDED", raising=False)
-    out = run({**INP, "request": "one_on_one"}, first["memory"], fri_1700_ist, None)
-    assert out["result"]["mode"] == "weekly" and any("weekly schedule window" in n for n in out["result"]["notes"])
-    assert run({**INP, "request": "one_on_one"}, first["memory"], sat_1700_ist, None)["result"]["mode"] == "one_on_one"
-    # something typed or dates given means a person asked: no override, even on Friday evening
-    assert run({**INP, "request": "one_on_one", "ask": "1:1 points"}, first["memory"], fri_1700_ist, None)["result"]["mode"] == "one_on_one"
-    # the local scheduler's own marker also counts
-    monkeypatch.setenv("GRAVITY_UNATTENDED", "1")
-    assert run({**INP, "request": "one_on_one"}, first["memory"], sat_1700_ist, None)["result"]["mode"] == "weekly"
+    assert run({**INP, "request": "weekly_update"}, first["memory"], W1, E["week2_start"])["result"]["mode"] == "weekly"
+    assert run({**INP, "request": "one_on_one"}, first["memory"], W1, E["week2_start"])["result"]["mode"] == "one_on_one"
 
 
 def test_windows_and_days_follow_the_timezone_input_not_utc_or_india():
