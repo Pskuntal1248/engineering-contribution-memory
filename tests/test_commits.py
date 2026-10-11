@@ -133,7 +133,7 @@ def test_one_on_one_has_blockers_when_open_pr_exists():
     from outputs import one_on_one
     it = Item(id="gh:pr:o/r#1", source="github", type="pr", date="2026-09-01T00:00:00Z", title="WIP", url="u", meta={"mine": True, "state": "open"})
     out = one_on_one({"gaps": [], "projects": [], "invisible": [], "decisions": [], "improvements": []}, {it.id: it}, [])
-    assert [s["heading"] for s in out] == ["Working on"] and "(u)" in out[0]["body"] and "still open" in out[0]["body"]
+    assert [s["heading"] for s in out] == ["Working on"] and "- u" in out[0]["body"] and "still open" in out[0]["body"]
 
 
 def test_weekly_summary_lists_shipped_commits_in_window():
