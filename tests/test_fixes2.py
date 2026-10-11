@@ -57,7 +57,7 @@ def test_ellipsis_survives_page_cleanup_and_every_pr_pairs_with_its_ticket():
     mk = lambda t, n, k, num=None: Item(id=f"{t}{n}", source="x", type=t, date=f"2026-09-0{n}", title=f"{k} Thing {n}", url=f"u{n}{t}", keys=[k, "AUTH-301"] if t == "pr" else [k], meta={"number": num} if num else {})
     items = [mk("pr", 1, "AUTH-1", 6), mk("pr", 2, "AUTH-2", 7), mk("ticket", 3, "AUTH-1"), mk("ticket", 4, "AUTH-2"), mk("ticket", 5, "AUTH-4")]
     lines = O._group_links(items)
-    assert len(lines) == 3 and lines[0].startswith("AUTH-1 Thing 1: [PR #6]") and "ticket" in lines[0] and "AUTH-301" not in " ".join(lines)
+    assert len(lines) == 3 and lines[0].startswith("AUTH-1 Thing 1: PR #6 - ") and "ticket" in lines[0] and "AUTH-301" not in " ".join(lines)
 
 
 def test_skills_count_distinct_work_not_pr_ticket_commit_separately():
