@@ -16,11 +16,11 @@ from langgraph.graph import END, StateGraph
 import eprofile
 import outputs
 from guards import ToolLog, budget_for, internal_terms, parse_channels
-from models import Item
+from models import Item, day, local_date_of, local_tz
 from pipeline import Config, ingest
 from sources import GatewaySource, Source
 from store import NativeMemoryStore, PlatformStore, ProfileStore, platform_store
-from ask import parse_request, parse_team_changes
+from ask import in_weekly_window, parse_request, parse_team_changes
 from weekly import new_items, next_cursors, quiet_week_line, since_for, id_key
 
 ON_DEMAND = {"weekly_summary", "one_on_one", "review_material", "interview_stories", "evidence_gaps"}
@@ -74,6 +74,11 @@ def _cfg(inp: dict) -> Config:
 
 
 def make_graph(deps: Deps):
+    def local_now(inp):
+        """Now in the user's timezone input. Gravity fires the weekly schedule on India time only, so every window and label is computed here."""
+        t = deps.now()
+        return t.astimezone(local_tz(inp.get("timezone"))) if t.tzinfo else t
+
     async def load(state: State) -> dict:
         inp = state.get("inputs", {})
         mem = state.get("memory")
@@ -86,18 +91,25 @@ def make_graph(deps: Deps):
         req = str(inp.get("request") or "auto")
         if req == "weekly_update":
             req = "auto"  # the dropdown default: the first run backfills, every later run is the weekly update (new items only)
-        said, d1, d2 = parse_request(str(inp.get("ask") or inp.get("message") or ""), deps.now().date())  # "message" is how a follow-up request typed under a finished run arrives
+        said, d1, d2 = parse_request(str(inp.get("ask") or inp.get("message") or ""), local_now(inp).date())  # "message" is how a follow-up request typed under a finished run arrives
         if said and req == "auto":
             req = said  # the typed request wins over the dropdown's default
         if not (str(inp.get("period_from") or "").strip() or str(inp.get("period_to") or "").strip()):
             if d1 or d2:  # dates typed in words are used only when the two date inputs are empty
                 inp["period_from"], inp["period_to"] = d1, d2
         has_memory = bool(prior.get("items") or prior.get("last_run"))  # an empty but completed run still counts
+        sched_note = []
+        no_ask = not (str(inp.get("ask") or inp.get("message") or "").strip() or str(inp.get("period_from") or "").strip() or str(inp.get("period_to") or "").strip())
+        if req in ON_DEMAND and no_ask and (os.environ.get("GRAVITY_UNATTENDED") == "1" or in_weekly_window(deps.now())):
+            # The schedule reuses the saved inputs, so a saved on-demand choice must not replace the weekly update. Gravity documents no "this is a
+            # scheduled run" signal: GRAVITY_UNATTENDED is set by the local `gravity schedule`, and the Friday window is an inference, so the run says so.
+            sched_note = [f"This run started in the weekly schedule window (Friday about 17:00 India time) with nothing typed, so it made the weekly update instead of the saved '{req}' output. Run it again at another time to get '{req}'."]
+            req = "auto"
         if req == "auto":
             req = "weekly" if prior.get("backfill_done") else "backfill"  # weekly only after a backfill really completed
         if req in ON_DEMAND and not has_memory:
             req = "backfill"  # nothing to report from yet
-        return {"ctx": {"started": time.monotonic(), "mode": req, "prior": prior, "store": store, "notes": ["memory was unreadable, starting fresh"] if prior.get("_corrupt") else (["the saved history was missing from the store, so this run backfills again"] if prior.get("_store_empty") else [])}}
+        return {"ctx": {"started": time.monotonic(), "mode": req, "prior": prior, "store": store, "notes": sched_note + (["memory was unreadable, starting fresh"] if prior.get("_corrupt") else (["the saved history was missing from the store, so this run backfills again"] if prior.get("_store_empty") else []))}}
 
     async def fetch(state: State) -> dict:
         ctx = state["ctx"]
@@ -146,6 +158,9 @@ def make_graph(deps: Deps):
                 failed += [{"source": f"slack:#{c}", "error": "channel not found"} for c in ing.not_found_channels if f"slack:#{c}" not in known]
         else:
             items = old
+        tz = local_tz(inp.get("timezone"))
+        for it_ in items:  # calendar days are shown in the user's timezone; the stored time stays UTC (ordering, cursors)
+            it_.meta["local_date"] = local_date_of(it_.date, tz)
         ctx["items"], ctx["new_ids"], ctx["failed"] = items, new_ids, failed
         prof = await eprofile.build(items, username=cfg.username, names=names, llm=deps.llm, budget=budget,
                                     framework=str(inp.get("review_framework", "") or ""), role_and_level=str(inp.get("role_and_level", "")),
@@ -163,11 +178,11 @@ def make_graph(deps: Deps):
         terms = internal_terms(items, [t for t in str(inp.get("redact_terms", "")).replace("\n", ",").split(",")], cfg.repos[0].split("/")[0] if cfg.repos else "", cfg.jira_site)
         window = ctx["new_ids"]
         if mode == "weekly_summary":  # on request: the last 7 days of the saved profile
-            cut = (deps.now() - timedelta(days=7)).strftime("%Y-%m-%d")
-            window = {i.id for i in items if i.date[:10] >= cut}
-        since = ctx.get("since", "")[:10] or (deps.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+            cut = (local_now(inp) - timedelta(days=7)).strftime("%Y-%m-%d")
+            window = {i.id for i in items if day(i) >= cut}
+        since = ctx.get("since", "")[:10] or (local_now(inp) - timedelta(days=7)).strftime("%Y-%m-%d")
         window_label = f"dated since {cut} (the last 7 days)" if mode == "weekly_summary" else "new since the last run"
-        quiet = quiet_week_line(since, deps.now().strftime("%Y-%m-%d")) if mode in {"weekly", "weekly_summary"} and not window else None
+        quiet = quiet_week_line(since, local_now(inp).strftime("%Y-%m-%d")) if mode in {"weekly", "weekly_summary"} and not window else None
         title = {"backfill": "Engineering profile", "weekly": "Weekly update", "weekly_summary": "Weekly summary", "one_on_one": "1:1 talking points",
                  "review_material": "Review material", "interview_stories": "Interview stories", "evidence_gaps": "Evidence gaps"}[mode]
         corpus, result = outputs.corpus_for(mode, prof, items, title=f"{title} - {cfg.username}", terms=terms, keep_internal=str(inp.get("keep_internal_details", "No")).lower() == "yes",
@@ -193,7 +208,7 @@ def make_graph(deps: Deps):
         return {"ctx": ctx, "corpus": corpus, "result": result}
 
     async def persist(state: State) -> dict:
-        ctx = state["ctx"]
+        ctx, inp = state["ctx"], state["inputs"]
         if ctx["mode"] in ON_DEMAND:
             return {}  # on-demand answers never change the saved profile
         prof, items, prior = ctx["prof"], ctx["items"], ctx["prior"]
@@ -202,7 +217,7 @@ def make_graph(deps: Deps):
             "items": [eprofile.compact(i, po.get(i.id, "")) for i in sorted(items, key=lambda x: (x.date, x.id))],
             "seen": sorted(set(prior.get("seen", [])) | {id_key(i.id) for i in items} | {id_key(m) for i in items for m in i.meta.get("merged_ids", [])}),
             "cursors": next_cursors(prior.get("cursors", {}), [i for i in items if i.source]),
-            "verdicts": prof["verdicts"], "cards": prof["card_store"], "dverdicts": prof.get("dverdicts", {}), "last_run": deps.now().strftime("%Y-%m-%d"),
+            "verdicts": prof["verdicts"], "cards": prof["card_store"], "dverdicts": prof.get("dverdicts", {}), "last_run": local_now(inp).strftime("%Y-%m-%d"),
             "backfill_done": bool(prior.get("backfill_done")) or ctx["mode"] == "backfill",
             "gaps": [{"id": g["id"], "status": g["status"]} for g in prof["gaps"]],
         }
