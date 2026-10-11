@@ -41,3 +41,28 @@ class Skipped:
 
     id: str
     reason: str
+
+
+def local_tz(name: str):
+    """The user's timezone input as a tzinfo; a missing or unknown name falls back to UTC (dates then stay as stored)."""
+    from datetime import timezone
+    from zoneinfo import ZoneInfo
+    try:
+        return ZoneInfo(str(name).strip()) if str(name or "").strip() else timezone.utc
+    except Exception:  # noqa: BLE001
+        return timezone.utc
+
+
+def local_date_of(iso: str, tz) -> str:
+    """Calendar day (YYYY-MM-DD) of a stored UTC ISO time in the user's timezone."""
+    from datetime import datetime, timezone
+    try:
+        d = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        return (d if d.tzinfo else d.replace(tzinfo=timezone.utc)).astimezone(tz).strftime("%Y-%m-%d")
+    except Exception:  # noqa: BLE001
+        return (iso or "")[:10]
+
+
+def day(it: "Item") -> str:
+    """The item's calendar day as the user sees it (their timezone); the stored date stays UTC for ordering and cursors."""
+    return it.meta.get("local_date") or it.date[:10]
