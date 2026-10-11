@@ -9,7 +9,7 @@ import ledger
 from analysis import NEEDS_DECISION
 from guards import FLAG, clip, TRIVIAL_TITLE, Statement, drop_colleague_assessments, flag_confidential, internal_terms, keep_cited, predicts_promotion, scrub
 from metrics import shipped
-from models import Item
+from models import Item, day
 
 LEDGER_CAP = 6000
 
@@ -166,7 +166,7 @@ def _thread_facts(ids: list[str], by_id: dict[str, Item], skip: set[str]) -> lis
         it = by_id.get(e)
         if it and it.type == "thread" and e not in skip:
             body = " ".join(l.split(": ", 1)[1] if ": " in l[:40] else l for l in it.text.splitlines())
-            out.append(f"Slack, {it.date[:10]}: {clip(re.sub(chr(32) + '+', chr(32), body).strip(), 160)}")
+            out.append(f"Slack, {day(it)}: {clip(re.sub(chr(32) + '+', chr(32), body).strip(), 160)}")
     return out[:2]
 
 
@@ -259,7 +259,7 @@ def build_statements(profile: dict[str, Any], by_id: dict[str, Item], kind: str,
     def within(ids: list[str]) -> bool:
         if not (date_from or date_to):
             return True
-        ds = [by_id[i].date[:10] for i in ids if i in by_id]
+        ds = [day(by_id[i]) for i in ids if i in by_id]
         return any((not date_from or d >= date_from) and (not date_to or d <= date_to) for d in ds)
 
     sts: list[Statement] = []
@@ -324,7 +324,7 @@ def one_on_one(profile: dict[str, Any], by_id: dict[str, Item], sts: list[Statem
     prs = [i for i in mine if i.type == "pr" and shipped(i) and not _TRIVIAL.search(i.title)]
     prs = sorted(prs, key=lambda i: (i.date, i.id))
     shown = prs[:8]
-    wins = [block(short(i.title, 80), f"I shipped this on {i.date[:10]}." + _what_it_did(i, by_id), items=_with_ticket(i, by_id)) for i in shown]
+    wins = [block(short(i.title, 80), f"I shipped this on {day(i)}." + _what_it_did(i, by_id), items=_with_ticket(i, by_id)) for i in shown]
     if len(prs) > len(shown):
         wins.append(f"Showing {len(shown)} of {len(prs)} shipped PRs; the rest are in the item ledger.")
     if not wins:  # no shipped PRs: finished tickets, still real work
@@ -337,7 +337,7 @@ def one_on_one(profile: dict[str, Any], by_id: dict[str, Item], sts: list[Statem
             continue
         where = f" in #{it.meta.get('channel')}" if it.meta.get("channel") else ""
         summ = re.sub(r"\s+", " ", v["summary"]).strip()
-        unseen.append(block(it.title, f"{_VERB.get(v['label'], 'I helped')}{where} on {it.date[:10]}, with no ticket raised: {summ}", items=[it]))
+        unseen.append(block(it.title, f"{_VERB.get(v['label'], 'I helped')}{where} on {day(it)}, with no ticket raised: {summ}", items=[it]))
     decs, made = [], []
     for d in profile["decisions"][:6]:
         it = by_id.get(d["evidence"][0])
@@ -409,7 +409,7 @@ def weekly_sections(profile: dict[str, Any], by_id: dict[str, Item], ids: set[st
 
 def _empty_period(items: list[Item], date_from: str, date_to: str) -> str:
     """Nothing in the asked period: say so, and say where the saved items actually are."""
-    ds = sorted(i.date[:10] for i in items if i.date)
+    ds = sorted(day(i) for i in items if i.date)
     if not ds or not (date_from or date_to):
         return "None found in this period."
     return f"None found in this period. The saved items are dated {ds[0]} to {ds[-1]}, so no project, thread or decision falls inside it."
@@ -477,12 +477,12 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
         fixes = [i for i in mine_ if i.type in {"pr", "ticket"} and re.search(r"\b(fix|fixes|fixed|bug|race|hotfix|mismatch|regression)\b", i.title, re.I)
                  and (shipped(i) if i.type == "pr" else str(i.meta.get("status", "")).lower() in {"done", "closed", "resolved"})]
         slack_fixes = [v for v in profile["invisible"] if v["label"] == "problem_solved"]
-        solved = [block(short(i.title, 80), f"I fixed this and it shipped on {i.date[:10]}.", items=[i]) for i in sorted(fixes, key=lambda x: x.date)[:8]]
+        solved = [block(short(i.title, 80), f"I fixed this and it shipped on {day(i)}.", items=[i]) for i in sorted(fixes, key=lambda x: x.date)[:8]]
         def _thread_block(v: dict[str, Any]) -> str:
             it = by_id[v["evidence"][0]]
             co = [c for c in v.get("co_contributors", []) if not _SLACK_ID.fullmatch(c)][:2]
             summ = re.sub(r"\s+", " ", v["summary"]).strip()
-            return block(it.title, summ, facts=[f"{it.date[:10]}, no ticket raised" + (f", with {', '.join(co)}" if co else "")], items=[it])
+            return block(it.title, summ, facts=[f"{day(it)}, no ticket raised" + (f", with {', '.join(co)}" if co else "")], items=[it])
         solved += [_thread_block(v) for v in slack_fixes if v["evidence"] and v["evidence"][0] in by_id]
         inv = [_thread_block(v) for v in profile["invisible"] if v["label"] != "problem_solved" and v["evidence"] and v["evidence"][0] in by_id]
         if slack_fixes:
@@ -515,7 +515,7 @@ def corpus_for(kind: str, profile: dict[str, Any], items: list[Item], *, title: 
         conf_ = set(profile.get("confidential", []))
         dec_ids = {e for d in profile["decisions"] for e in d["evidence"]}
         proj_ = [sar_block(p, by_id, conf_, dec_ids) for p in profile["projects"] if (not (date_from or date_to)) or any(
-            (not date_from or by_id[e].date[:10] >= date_from) and (not date_to or by_id[e].date[:10] <= date_to) for e in p["evidence"] if e in by_id)]
+            (not date_from or day(by_id[e]) >= date_from) and (not date_to or day(by_id[e]) <= date_to) for e in p["evidence"] if e in by_id)]
         other = build_statements(profile, by_id, "review_material", names, colleagues, date_from, date_to, with_projects=False)
         sections.insert(0, {"heading": f"Impact statements {date_from or 'all'} to {date_to or 'now'}",
                             "body": "\n\n".join(proj_ + [block(_st_title(s_, by_id), s_.text, items=_ev(s_.evidence, by_id, 2)) for s_ in other]) or _empty_period(items, date_from, date_to)})
