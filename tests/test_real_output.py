@@ -116,7 +116,7 @@ def test_slack_items_get_a_real_title_and_link_and_the_page_has_blocks_with_link
                            date_from="", date_to="", run_notes=[], failed=[], quiet_line=None, new_ids=set())
     from outputs import to_markdown
     md = to_markdown(corpus, with_tables=False)
-    assert "\n\n**" in md and "\n[" in md and "the user" not in md.lower()
+    assert "\n\n**" in md and "\nSource: " in md and "the user" not in md.lower()
     solved = next(s for s in corpus["sections"] if s["heading"] == "Problems solved")["body"]
     inv = next(s for s in corpus["sections"] if s["heading"] == "Invisible work")["body"]
     assert "listed once, under Problems solved" in inv and "Settlement totals" not in inv  # the same thread is not repeated verbatim
@@ -137,7 +137,7 @@ def test_error_text_is_clean_and_pr_and_ticket_share_one_evidence_line():
     assert "Unauthorized; token has expired for this call" in msg and not msg.rstrip(").").endswith("s")
     pr_, tk = pr(6, "AUTH-1", "Add session token refresh"), ticket("AUTH-1", "Add session token refresh")
     out = block("Project", "One sentence.", items=[pr_, tk])
-    assert out.count("Add session token refresh") == 1 and "[PR #6](" in out and "[ticket](" in out
+    assert out.count("Add session token refresh") == 1 and "PR #6 - https://" in out and "ticket - https://" in out
     assert out.split("\n\n")[0] == "**Project**" and out.split("\n\n")[1] == "One sentence."
 
 
@@ -157,7 +157,7 @@ def test_review_material_is_situation_action_result_per_project_with_links():
                            date_from="", date_to="", run_notes=[], failed=[], quiet_line=None, new_ids=set())
     body = corpus["sections"][0]["body"]
     assert body.count("- Situation:") == 3 and body.count("- Action:") == 3 and body.count("- Result:") == 3
-    assert body.count("Evidence:") >= 3 and "](https://" in body and "1 PRs" not in body
+    assert body.count("Evidence:") >= 3 and " - https://" in body and "1 PRs" not in body
 
 
 def test_confluence_falls_back_to_the_pages_list_when_the_cql_search_is_refused_for_scope():
