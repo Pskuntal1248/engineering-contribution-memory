@@ -1,7 +1,7 @@
 contract: v1
 name: engineering-contribution-memory
 version: 0.1.0
-description: Reads your last 6 months of GitHub (plus Jira, Slack and docs when connected), links PRs, tickets and discussions into projects, finds work that never made it into a ticket, and keeps an evidence-linked engineering profile current every week.
+description: Reads 6 months of GitHub, Jira, Slack and docs, links them into projects, finds work with no ticket, and keeps an evidence-linked engineering profile current. All schedules run on India time (Asia/Kolkata), so the weekly run is Friday 17:00 IST and the timezone input does not move it. Scheduled runs reuse saved inputs, so keep "What to produce" on weekly_update. Other outputs are on-demand and read the saved profile without re-reading sources.
 kind: monitor
 
 runtime:
@@ -69,7 +69,7 @@ inputs:
     required: false
   - name: ask
     type: text
-    label: "Or type what you want, e.g. weekly summary, 1:1 points, review material for April to September, interview stories, evidence gaps"
+    label: "Optional: type what you want, e.g. 1:1 points or interview stories (used only when What to produce is weekly_update; for review material use the two dates)"
     required: false
   - name: team_changes
     type: textarea
@@ -77,13 +77,13 @@ inputs:
     required: false
   - name: request
     type: static-dropdown
-    label: "What to produce"
-    options: ["auto", "weekly_summary", "one_on_one", "review_material", "interview_stories", "evidence_gaps"]
-    default: "auto"
+    label: "What to produce (weekly_update = first run backfills, then new items each week; the scheduled run uses this)"
+    options: ["weekly_update", "weekly_summary", "one_on_one", "review_material", "interview_stories", "evidence_gaps"]
+    default: "weekly_update"
     required: false
   - name: period_from
     type: date
-    label: "Review material: from"
+    label: "Review material: from (the two dates decide the period)"
     required: false
   - name: period_to
     type: date
