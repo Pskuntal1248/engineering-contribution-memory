@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from typing import Any, Awaitable, Callable, Protocol
 
 from guards import ToolLog, err_text
@@ -17,6 +18,8 @@ MAX_PRS_PER_REPO = 600
 MAX_COMMITS_PER_REPO = 300
 MAX_COMMIT_LOOKUPS = 100
 PARALLEL = 10  # simultaneous gateway calls
+PAGE = 100  # the largest page the GitHub tools give
+MAX_LIST_PAGES = 10
 MAX_PR_FILE_LOOKUPS = 400  # file lists are one call per PR; bounded and reported
 
 
@@ -68,6 +71,10 @@ class FixtureSource:
         }
 
 
+class FetchTimeUp(RuntimeError):
+    pass
+
+
 class GatewaySource:
     """Real tools through the Gravity gateway. Only certified read tools are used by default.
     NOTE: argument names are best guesses from the tool descriptions; they are unverified until a run
@@ -79,8 +86,14 @@ class GatewaySource:
         self.docs_sources = [d.lower() for d in (docs_sources or [])]
         gate = asyncio.Semaphore(PARALLEL)  # one limit for every source running side by side
 
+        self.deadline: float | None = None  # monotonic time after which no new gateway call starts (set by the graph)
+        self.skipped = 0
+
         async def limited(tool: str, args: dict) -> Any:
             async with gate:
+                if self.deadline is not None and time.monotonic() > self.deadline:
+                    self.skipped += 1
+                    raise FetchTimeUp("fetch time limit reached")  # waiting callers stop here instead of running past the run's time limit
                 return await call(tool, args)
         self.call, self.username, self.repos = limited, username, repos
         self.slack_channels, self.include_dms, self.jira_projects, self.has = slack_channels, include_dms, jira_projects, has
@@ -114,9 +127,26 @@ class GatewaySource:
                              doc_part("confluence", "confluence.cql_search", adapters.fetch_confluence),
                              doc_part("notion", "notion.search_notion_page", adapters.fetch_notion),
                              doc_part("google drive", "drive.find_file", adapters.fetch_drive))
+        if self.skipped:
+            out["failed"] = [f for f in out["failed"] if "fetch time limit" not in str(f.get("error"))]
+            out["capped"].append(f"time limit: stopped reading sources early, {self.skipped} detail reads (PR files, reviews, ticket history, Slack threads, pages) were not done; "
+                                 "the items found by the list reads are still included. Narrow backfill_months or run again to cover the rest")
         if not self.docs_sources:
             out["failed"].append({"source": "docs", "error": "no docs source chosen (set docs_source to Confluence, Notion or Google Drive)"})
         return out
+
+    async def _paged(self, tool: str, args: dict, keys: tuple[str, ...], cap: int, since: str | None = None) -> list[dict]:
+        """All pages of a GitHub list tool (default page size is 30, so one call silently dropped everything past it). Stops on a short page,
+        at `cap` rows, at MAX_LIST_PAGES, or once the rows are older than `since`."""
+        rows: list[dict] = []
+        for page in range(1, MAX_LIST_PAGES + 1):
+            got = _rows(await self.call(tool, {**args, "per_page": PAGE, "page": page}), *keys)
+            rows += got
+            if len(got) < PAGE or len(rows) >= cap:
+                break
+            if since and all(str(g.get("created_at") or "9") < since for g in got):
+                break
+        return rows[:cap]
 
     async def _github(self, out: dict, since: str, log: ToolLog) -> None:
         for repo in self.repos:
@@ -137,14 +167,15 @@ class GatewaySource:
 
         log.add("github.search_issues", repo=repo)
         q = f"repo:{repo} is:pr author:{self.username} created:>={since[:10]}"
-        prs = _rows(await self.call("github.search_issues", {"q": q, "per_page": 100}), "items")[:MAX_PRS_PER_REPO]
+        prs = await self._paged("github.search_issues", {"q": q}, ("items",), MAX_PRS_PER_REPO)
         log.add("github.search_issues", repo=repo, reviewed_by=self.username)
         rv_q = f"repo:{repo} is:pr reviewed-by:{self.username} -author:{self.username} created:>={since[:10]}"
-        others = _rows(await self.call("github.search_issues", {"q": rv_q, "per_page": 100}), "items")[:300]
+        others = await self._paged("github.search_issues", {"q": rv_q}, ("items",), 300)
         # Search results often lack merged_at. The PR list carries it, so one call per repo fills it in by number.
         try:
             log.add("github.list_pull_requests", repo=repo, state="closed")
-            listed = _rows(await self.call("github.list_pull_requests", {"owner": owner, "repo": name, "state": "closed", "per_page": 100}), "pull_requests")
+            listed = await self._paged("github.list_pull_requests", {"owner": owner, "repo": name, "state": "closed", "sort": "created", "direction": "desc"}, ("pull_requests",),
+                                       MAX_PRS_PER_REPO * 2, since)
             by_num = {x.get("number"): x for x in listed}
             for p in prs:
                 full = by_num.get(p.get("number"))
@@ -159,14 +190,14 @@ class GatewaySource:
             if not allowed:
                 return
             try:
-                p["files"] = _rows(await one("github.list_pr_files", {"owner": owner, "repo": name, "pull_number": p.get("number")}))
+                p["files"] = _rows(await one("github.list_pr_files", {"owner": owner, "repo": name, "pull_number": p.get("number"), "per_page": 100}))
             except Exception:  # noqa: BLE001 - totals are used instead, flagged via size basis
                 p["files"] = []
 
         async def reviews(p: dict) -> None:
             key = f"{repo}#{p.get('number')}"
             try:
-                out["github"]["reviews"][key] = _rows(await one("github.list_pr_reviews", {"owner": owner, "repo": name, "pull_number": p.get("number")}))
+                out["github"]["reviews"][key] = _rows(await one("github.list_pr_reviews", {"owner": owner, "repo": name, "pull_number": p.get("number"), "per_page": 100}))
             except Exception as e:  # noqa: BLE001
                 out["failed"].append({"source": f"github-reviews:{key}", "error": err_text(e, 200)})
 
@@ -189,7 +220,7 @@ class GatewaySource:
         owner, name = repo.split("/", 1)
         try:
             log.add("github.list_commits", repo=repo)
-            rows = _rows(await self.call("github.list_commits", {"owner": owner, "repo": name, "author": self.username, "since": since, "per_page": 100}), "commits")
+            rows = await self._paged("github.list_commits", {"owner": owner, "repo": name, "author": self.username, "since": since}, ("commits",), MAX_COMMITS_PER_REPO)
         except Exception as e:  # noqa: BLE001 - named in the result
             out["failed"].append({"source": f"github-commits:{repo}", "error": err_text(e, 200)})
             return
