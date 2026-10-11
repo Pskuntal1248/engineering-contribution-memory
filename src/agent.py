@@ -15,12 +15,12 @@ from langgraph.graph import END, StateGraph
 
 import eprofile
 import outputs
-from guards import ToolLog, budget_for, internal_terms, parse_channels
+from guards import MODE_LIMITS, ToolLog, budget_for, internal_terms, parse_channels
 from models import Item, day, local_date_of, local_tz
 from pipeline import Config, ingest
 from sources import GatewaySource, Source
 from store import NativeMemoryStore, PlatformStore, ProfileStore, platform_store
-from ask import in_weekly_window, parse_request, parse_team_changes
+from ask import parse_request, parse_team_changes
 from weekly import new_items, next_cursors, quiet_week_line, since_for, id_key
 
 ON_DEMAND = {"weekly_summary", "one_on_one", "review_material", "interview_stories", "evidence_gaps"}
@@ -98,18 +98,11 @@ def make_graph(deps: Deps):
             if d1 or d2:  # dates typed in words are used only when the two date inputs are empty
                 inp["period_from"], inp["period_to"] = d1, d2
         has_memory = bool(prior.get("items") or prior.get("last_run"))  # an empty but completed run still counts
-        sched_note = []
-        no_ask = not (str(inp.get("ask") or inp.get("message") or "").strip() or str(inp.get("period_from") or "").strip() or str(inp.get("period_to") or "").strip())
-        if req in ON_DEMAND and no_ask and (os.environ.get("GRAVITY_UNATTENDED") == "1" or in_weekly_window(deps.now())):
-            # The schedule reuses the saved inputs, so a saved on-demand choice must not replace the weekly update. Gravity documents no "this is a
-            # scheduled run" signal: GRAVITY_UNATTENDED is set by the local `gravity schedule`, and the Friday window is an inference, so the run says so.
-            sched_note = [f"This run started in the weekly schedule window (Friday about 17:00 India time) with nothing typed, so it made the weekly update instead of the saved '{req}' output. Run it again at another time to get '{req}'."]
-            req = "auto"
         if req == "auto":
             req = "weekly" if prior.get("backfill_done") else "backfill"  # weekly only after a backfill really completed
         if req in ON_DEMAND and not has_memory:
             req = "backfill"  # nothing to report from yet
-        return {"ctx": {"started": time.monotonic(), "mode": req, "prior": prior, "store": store, "notes": sched_note + (["memory was unreadable, starting fresh"] if prior.get("_corrupt") else (["the saved history was missing from the store, so this run backfills again"] if prior.get("_store_empty") else []))}}
+        return {"ctx": {"started": time.monotonic(), "mode": req, "prior": prior, "store": store, "notes": (["memory was unreadable, starting fresh"] if prior.get("_corrupt") else (["the saved history was missing from the store, so this run backfills again"] if prior.get("_store_empty") else []))}}
 
     async def fetch(state: State) -> dict:
         ctx = state["ctx"]
@@ -126,6 +119,8 @@ def make_graph(deps: Deps):
         since = since_for(cursor, start) if mode == "weekly" else start
         ctx["since"] = since
         src: Source = deps.source_factory(cfg)
+        if hasattr(src, "deadline"):  # detail reads stop early enough to leave the analysis its share of the run's time limit
+            src.deadline = ctx.get("started", time.monotonic()) + MODE_LIMITS["backfill" if mode == "backfill" else "weekly"][1] * 0.73  # 73%: 22 min of 30 (backfill), 3.6 of 5 (weekly)
         ctx["raw"] = await src.fetch(since, None, ctx["log"])
         return {"ctx": ctx}
 
