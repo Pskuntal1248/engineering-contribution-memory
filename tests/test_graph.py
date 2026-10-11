@@ -82,3 +82,18 @@ def test_typed_request_in_message_input_is_understood():
     first = run(INP, {}, W1, E["week2_start"])
     out = run({**INP, "message": "interview stories"}, first["memory"], W1, E["week2_start"])
     assert out["result"]["mode"] == "interview_stories"
+
+
+def test_weekly_update_default_backfills_then_updates_weekly():
+    a = run({**INP, "request": "weekly_update"}, {}, W1, E["week2_start"])
+    assert a["result"]["mode"] == "backfill"
+    b = run({**INP, "request": "weekly_update"}, a["memory"], W2, None)
+    assert b["result"]["mode"] == "weekly"
+
+
+def test_date_inputs_win_over_words_in_ask():
+    first = run(INP, {}, W1, E["week2_start"])
+    out = run({**INP, "request": "review_material", "period_from": "2026-09-01", "period_to": "2026-10-31", "ask": "review material for April to September"}, first["memory"], W1, E["week2_start"])
+    assert "2026-09-01 to 2026-10-31" in out["corpus"]["sections"][0]["heading"]
+    words = run({**INP, "ask": "review material for April to September"}, first["memory"], W1, E["week2_start"])
+    assert words["result"]["mode"] == "review_material"
