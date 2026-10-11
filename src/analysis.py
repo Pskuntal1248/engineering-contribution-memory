@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from guards import Budget, BudgetExceeded, Statement, cap_role, clip, co_contributors, decision_voice, first_person, drop_colleague_assessments, keep_cited
 from linking import tokens
 from metrics import shipped
-from models import Item
+from models import Item, day
 
 # ----------------------------------------------------------------- schemas (typed model outputs)
 Label = Literal["problem_solved", "decision", "help_given", "mentoring", "none"]
@@ -270,10 +270,10 @@ def baseline_project_card(pid: str, ids: list[str], by_id: dict[str, Item], user
     prs = [e for e in ev if e.type == "pr" and e.meta.get("mine")]
     shipped_n = sum(1 for e in prs if shipped(e))
     role = cap_role("built" if prs else "contributed", ev, username)
-    dates = sorted(e.date for e in ev)
+    dates = sorted(day(e) for e in ev)
     return {"project_id": pid, "name": name or pid, "goal": "not stated in the sources (model summary needed)",
             "outcome": _counts_line(shipped_n, sum(1 for t in tickets if t.meta.get("status", "").lower() in {"done", "closed", "resolved"})),
-            "role": role, "first": dates[0][:10], "last": dates[-1][:10], "evidence": sorted(ids, key=lambda i: (by_id[i].date, i))[:60]}
+            "role": role, "first": dates[0], "last": dates[-1], "evidence": sorted(ids, key=lambda i: (by_id[i].date, i))[:60]}
 
 
 SKILL_LEXICON = {
