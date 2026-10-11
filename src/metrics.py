@@ -7,7 +7,7 @@ from statistics import median
 from typing import Any
 
 from guards import TRIVIAL_TITLE
-from models import Item
+from models import Item, day
 
 # Review-feedback themes counted in code. The model may word the finding; it never counts it.
 THEMES: dict[str, tuple[str, list[str]]] = {
@@ -104,5 +104,5 @@ def per_project_counts(items: list[Item], clusters: dict[str, dict]) -> dict[str
 
 
 def date_range(items: list[Item]) -> tuple[str, str]:
-    ds = sorted(i.date for i in items if i.date)
-    return (ds[0][:10], ds[-1][:10]) if ds else ("", "")
+    ds = sorted(day(i) for i in items if i.date)
+    return (ds[0], ds[-1]) if ds else ("", "")
