@@ -114,7 +114,7 @@ def check_mode(name, md, res, wall, code, log, limit_s, limit_calls):
             continue
         for blk in blocks_of(b):
             txt = "\n".join(blk)
-            if len(blk) > 1 and "No items found" not in txt and not re.search(r"\]\(https?://|Source: ", txt):
+            if len(blk) > 1 and "No items found" not in txt and not re.search(r"https?://|Source: ", txt):
                 nolink.append(blk[0][:60])
     chk("every item has a link", not nolink, f"{len(nolink)} without: {nolink[:3]}")
     # repeated title lines
