@@ -487,8 +487,8 @@ async def drive_identity(call: Call, log: ToolLog, out: dict) -> dict:
 
 async def fetch_drive(call: Call, since: str, log: ToolLog, out: dict) -> None:
     """Docs the connected account wrote or edited. The query only pre-filters by permission (owner/writer), and permission is
-    not contribution: a body is exported only with positive edit evidence - the account last modified the doc, or one of its
-    revisions belongs to the account. Everything else is listed by title, never read, never credited."""
+    not contribution: a body is exported only with positive edit evidence - the account last modified the doc, in the report period, or it has an in-period revision
+    by the account. Everything else is listed by title, never read, never credited."""
     me = await drive_identity(call, log, out)
     q = ("trashed = false and mimeType = 'application/vnd.google-apps.document' "
          f"and modifiedTime > '{since[:10]}T00:00:00' and ('me' in owners or 'me' in writers)")
@@ -524,7 +524,8 @@ async def fetch_drive(call: Call, since: str, log: ToolLog, out: dict) -> None:
         revs = rows(data, "revisions")
         if not revs:
             history_gaps += 1
-        return any(_same_account(r.get("lastModifyingUser"), me) for r in revs)
+        # only an in-period revision counts: an old edit must not credit a doc whose recent work is someone else's
+        return any(_same_account(r.get("lastModifyingUser"), me) and str(r.get("modifiedTime") or "")[:10] >= since[:10] for r in revs)
 
     async def one(f: dict) -> None:
         nonlocal unverified
@@ -547,11 +548,11 @@ async def fetch_drive(call: Call, since: str, log: ToolLog, out: dict) -> None:
             out["failed"].append({"source": f"docs:drive:{f.get('name') or f.get('id')}", "error": "doc text could not be read, so it is listed by title only (" + err_text(e) + ")"})
         out["docs"].append({**base, "body": (body + " " + (f.get("description") or "")).strip(),
                             "_mine": True, "body_failed": body_failed,
-                            "_attribution": "edit evidence: the connected account last modified the doc or owns one of its revisions"})
+                            "_attribution": "edit evidence: the connected account last modified the doc in the report period or owns an in-period revision"})
 
     await asyncio.gather(*(one(f) for f in files))
     if unverified:
-        out["capped"].append(f"drive: {unverified} doc(s) you can access had no proof you wrote or edited them - listed by title only, bodies not read, not credited")
+        out["capped"].append(f"drive: {unverified} doc(s) you can access had no proof you wrote or edited them in the report period - listed by title only, bodies not read, not credited")
     if history_gaps:
         out["capped"].append(f"drive: edit history was missing or unreadable for {history_gaps} doc(s); genuine older edits may exist that cannot be proven")
 
