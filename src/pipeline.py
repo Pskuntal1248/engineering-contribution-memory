@@ -60,17 +60,20 @@ def _pr_head(p: dict) -> str:
 
 
 def covered_by_pr(c: Item, prs: list[dict], canon: Any = None, pkeys: dict[int, list[str]] | None = None) -> bool:
-    """A commit that is part of one of the user's PRs, on relation evidence only: the same ticket key inside the PR's life
-    (old keys resolved through the tickets' alias records; PR keys include branch-name keys), or only files the PR touched
-    inside its life. A same or similar title never merges a commit - same titles can be independent work, so an uncertain
-    commit stays its own row."""
+    """A commit that is part of one of the user's PRs, on relation evidence only: the commit's SHA is in the PR's own
+    commit list; the same ticket key inside the PR's life (old keys resolved through the tickets' alias records; PR keys
+    include branch-name keys); or only files the PR touched inside its life. A same or similar title never merges a
+    commit - same titles can be independent work, so an uncertain commit stays its own row."""
     cd = N.parse_ts(c.date)
     cpaths = set(c.meta.get("paths") or [])
+    csha = str(c.meta.get("sha") or "")
     canon = canon or (lambda k: k)
     ckeys = {canon(k) for k in c.keys}
     for i, p in enumerate(prs):
         if p.get("_repo") != c.meta.get("repo") or N._login(p.get("user")).lower() != str(c.author).lower():
             continue
+        if csha and csha in set(p.get("_commit_shas") or []):
+            return True
         start, end = N.parse_ts(p.get("created_at")), N.parse_ts(N.pr_merged_at(p) or p.get("closed_at"))
         if not (cd and start and end and start.timestamp() - 7 * 86400 <= cd.timestamp() <= end.timestamp() + 120):
             continue
@@ -198,7 +201,7 @@ def ingest(raw: dict[str, Any], cfg: Config, log: ToolLog | None = None) -> Inge
             elif first.startswith("Merge ") or (m and (c.get("_repo", ""), m.group(1)) in pr_nums):
                 x = Skipped(x.id, "merge commit or commit already counted through its PR")
             elif covered_by_pr(x, prs, canon, pr_keys):
-                x = Skipped(x.id, "commit already counted through its PR (a shared ticket key or the same files, inside the PR's dates)")
+                x = Skipped(x.id, "commit already counted through its PR (its SHA is one of the PR's commits, a shared ticket key, or the same files, inside the PR's dates)")
         take(x)
     gap_burst = 600.0
     channels = raw.get("slack", {}).get("channels", [])
