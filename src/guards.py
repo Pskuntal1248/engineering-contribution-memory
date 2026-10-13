@@ -89,9 +89,10 @@ def channels_to_read(all_channels: list[dict[str, Any]], chosen: list[str], incl
             elif log is not None:
                 log.add("skipped_channel", channel=ch.get("id"), reason="dm excluded")
             continue
-        if nm in names:
+        ids = {nm, str(ch.get("id", "")).lower()} - {""}  # a channel can be named by its exact name or its ID
+        if ids & names:
             picked.append(ch)
-            found.add(nm)
+            found |= ids & names
     found |= {str(c.get("id", "")).lower() for c in picked} | {str(c.get("user", "")).lower() for c in picked}
     return picked, sorted(names - found - {"*dm*"})
 
@@ -287,3 +288,4 @@ def err_text(e: BaseException, n: int = 160) -> str:
     if subs:
         return "; ".join(dict.fromkeys(err_text(x, n) for x in subs))[:n]
     return (str(e) or e.__class__.__name__)[:n]
+
