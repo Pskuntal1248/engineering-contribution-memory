@@ -152,7 +152,7 @@ def test_notion_bodies_are_read_only_for_id_verified_pages():
 
     async def call(name, args):
         if name == "notion.list_users":
-            return {"results": [{"object": "user", "id": "u-me", "type": "person", "name": "Parth Singh"}]}
+            return {"results": [{"object": "user", "id": "u-me", "type": "person", "name": "Parth Singh", "person": {"email": "ps.kuntal2005@gmail.com"}}]}
         if name == "notion.search_notion_page":
             return {"results": [
                 {"id": "n1", "created_by": {"id": "u-me"}, "last_edited_by": {"id": "u-me"}, "last_edited_time": "2026-09-01T00:00:00Z",
@@ -172,10 +172,10 @@ def test_notion_bodies_are_read_only_for_id_verified_pages():
         return await call(name, args)
 
     out = {"docs": [], "failed": [], "capped": []}
-    asyncio.run(fetch_notion(logged, "2026-01-01T00:00:00Z", ToolLog(), out, ["Parth Singh"]))
+    asyncio.run(fetch_notion(logged, "2026-01-01T00:00:00Z", ToolLog(), out, ["Parth Singh", "ps.kuntal2005@gmail.com"]))
     got = {d["title"]: (d["_attribution"], d["_mine"]) for d in out["docs"]}
-    # only the id-verified page is opened or kept; the byline page is never read, because finding a byline means reading the body
-    assert got == {"Mine by id": ("notion user id", True)} and reads == ["n1"]
+    # only the id-matched page is opened or kept; the byline page is never read, because finding a byline means reading the body
+    assert got == {"Mine by id": ("notion account email match", True)} and reads == ["n1"]
     assert any("2 recently edited page(s) were not created or edited by your Notion user and were not read" in c for c in out["capped"])
 
 
