@@ -146,14 +146,14 @@ def page(pid, creator, editor, title="Page"):
             "properties": {"title": {"type": "title", "title": [{"plain_text": title}]}}}
 
 
-def run_notion(call):
+def run_notion(call, names=("Parth Singh", "me@example.com")):
     out = {"docs": [], "failed": [], "capped": []}
-    asyncio.run(fetch_notion(call, SINCE, ToolLog(), out, ["Parth Singh"]))
+    asyncio.run(fetch_notion(call, SINCE, ToolLog(), out, list(names)))
     return out
 
 
 def test_notion_page_by_someone_else_is_never_opened():
-    users = [{"object": "user", "type": "person", "id": "u-me", "name": "Parth Singh"},
+    users = [{"object": "user", "type": "person", "id": "u-me", "name": "Parth Singh", "person": {"email": "me@example.com"}},
              {"object": "user", "type": "person", "id": "u-other", "name": "Someone Else"}]
     pages = [page("p-mine", "u-me", "u-me", "Mine"), page("p-theirs", "u-other", "u-other", "Theirs")]
     call, reads = notion_call(users, pages)
@@ -169,6 +169,25 @@ def test_notion_unverified_user_reads_nothing():
     out = run_notion(call)
     assert reads == [] and out["docs"] == []
     assert any("your Notion user could not be verified, so none of the 1 recent page(s) were read" in c for c in out["capped"])
+
+
+def test_notion_unique_name_match_without_email_resolves_nothing():
+    # one visible namesake is possible: a name is a claim, so without an account-email match nothing is opened or credited
+    users = [{"object": "user", "type": "person", "id": "u-me", "name": "Parth Singh"}]
+    call, reads = notion_call(users, [page("p1", "u-me", "u-me")])
+    out = run_notion(call, names=("Parth Singh",))
+    assert reads == [] and out["docs"] == []
+    assert any("a matching name is not proof of identity" in f["error"] for f in out["failed"])
+    assert any("your Notion user could not be verified" in c for c in out["capped"])
+
+
+def test_notion_exact_account_email_resolves_despite_namesake():
+    users = [{"object": "user", "type": "person", "id": "u-me", "name": "Parth Singh", "person": {"email": "me@example.com"}},
+             {"object": "user", "type": "person", "id": "u-twin", "name": "Parth Singh", "person": {"email": "twin@example.com"}}]
+    call, reads = notion_call(users, [page("p1", "u-me", "u-me"), page("p2", "u-twin", "u-twin")])
+    out = run_notion(call)
+    assert reads == ["p1"] and [d["title"] for d in out["docs"]] == ["Page"]
+    assert out["docs"][0]["_attribution"] == "notion account email match"
 
 
 def test_confluence_v2_identity_ok_opens_only_matching_pages():
