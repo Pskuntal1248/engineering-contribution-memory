@@ -5,6 +5,7 @@ and are NOT verified against a connected account until a real run."""
 from __future__ import annotations
 
 import asyncio
+import difflib
 import re
 from typing import Any, Awaitable, Callable
 
@@ -144,10 +145,32 @@ async def _gather(sem: asyncio.Semaphore, call: Call, name: str, args: dict) -> 
 
 
 # ------------------------------------------------------------------ Jira
-async def fetch_jira(call: Call, projects: list[str], since: str, log: ToolLog, out: dict) -> None:
+async def fetch_jira(call: Call, projects: list[str], since: str, log: ToolLog, out: dict, has: set[str] | None = None) -> None:
     if not projects:
         out["failed"].append({"source": "jira", "error": "no Jira project keys given"})
         return
+    if has and "jira.get_all_projects" in has:  # check the keys before any ticket read; a wrong key must not silently read nothing
+        try:
+            log.add("jira.get_all_projects")
+            visible = rows(await call("jira.get_all_projects", {"max_results": 200}), "values", "projects", "results")
+            canon = {str(p.get("key", "")).upper(): str(p.get("key", "")) for p in visible if p.get("key")}
+            canon = {k: v for k, v in canon.items() if k}
+            checked: list[str] = []
+            for proj in projects:
+                hit = canon.get(str(proj).upper())
+                if hit:
+                    checked.append(hit)
+                else:
+                    close = difflib.get_close_matches(str(proj).upper(), sorted(canon), n=3, cutoff=0.6)
+                    out["failed"].append({"source": f"jira:{proj}", "error": (
+                        f"project {proj} is not visible to the connected Jira account, so nothing was read for it. "
+                        + (f"Did you mean: {', '.join(close)}? " if close else "")
+                        + f"Projects it can see: {', '.join(sorted(canon.values())) or 'none'}. Rerun with the exact project key.")})
+            projects = checked
+            if not projects:
+                return
+        except Exception as e:  # noqa: BLE001 - the grant behind this tool is unverified; without it there is no preflight
+            out["failed"].append({"source": "jira-preflight", "error": "project keys could not be checked first, so they are used as given: " + err_text(e, 120)})
     jql = (f'project in ({",".join(projects)}) AND updated >= "{since[:10]}" '
            f'AND (assignee = currentUser() OR reporter = currentUser() OR commentedBy = currentUser()) ORDER BY updated DESC')
     found: list[dict] = []
