@@ -115,7 +115,9 @@ permissions:
     - github.list_pr_reviews
     - github.list_commits
     - github.get_commit
+    - github.list_commits_on_a_pull_request
     - jira.search_issues
+    - jira.get_all_projects
     - jira.get_server_info
     - jira.get_issue
     - jira.list_issue_comments
@@ -151,4 +153,5 @@ state:
 outputs:
   profile: {renderer: markdown, label: "Profile / report", destinations: [download]}
   ledger: {renderer: rows, label: "Item ledger (CSV)"}
+
 
