@@ -215,24 +215,6 @@ async def fetch_jira(call: Call, projects: list[str], since: str, log: ToolLog, 
 
 
 # ------------------------------------------------------------ Confluence
-_BYLINE = re.compile(r"\b(?:owner|author|written by|dri)\s*:\s*([A-Za-z][\w.'-]*(?:[ ]+[A-Za-z][\w.'-]*){0,3})", re.I)
-
-
-def name_match(label: str, names: list[str]) -> bool:
-    """The author/editor display name is exactly one of the user's configured names."""
-    ll = (label or "").strip().lower()
-    return bool(ll) and ll in {n.strip().lower() for n in names if n and n.strip()}
-
-
-def byline_match(body: str, names: list[str]) -> str:
-    """An explicit 'Owner: <name>' style line in the page text naming the user. The name must match in full."""
-    for m in _BYLINE.finditer((body or "")[:2000]):
-        who = m.group(1).strip().lower()
-        for n in names:
-            if n and n.strip() and n.strip().lower() == who:
-                return n
-    return ""
-
 
 def _scope_problem(err: str) -> bool:
     e = (err or "").lower()
@@ -257,11 +239,9 @@ async def probe_confluence(call: Call, log: ToolLog) -> str:
 
 
 async def fetch_confluence_v2(call: Call, since: str, log: ToolLog, out: dict, first_error: str, names: list[str] | None = None) -> None:
-    """Fallback when the CQL search (Confluence REST v1) is refused for scope: list recent pages through the v2 pages tool.
-    A page is credited only on positive evidence: the identity call's account id, the author/editor display name matching the
-    user's names, or an explicit Owner/Author byline in the page text. Being the only author visible is not evidence, so
-    without one of those the page is left out and counted in the note."""
-    names = names or []
+    """Fallback when the CQL search (Confluence REST v1) is refused for scope: list recent pages metadata-first through the
+    v2 pages tool, then open only pages the identity call proves the connected account created or edited. If the identity call
+    is refused too, no page is opened at all - an explicit coverage limit, not a body-reading name hunt."""
     mine_ids: set[str] = set()
     my_name = ""
     try:  # who the connection is; some connections refuse this call while the pages list still works
@@ -274,12 +254,9 @@ async def fetch_confluence_v2(call: Call, since: str, log: ToolLog, out: dict, f
         pass
     try:
         log.add("confluence.get_pages")
-        try:
-            data = await call("confluence.get_pages", {"sort": "-modified-date", "limit": 100, "status": "current", "body_format": "storage"})
-            if failed_payload(data):
-                raise RuntimeError(failed_payload(data))
-        except Exception:  # noqa: BLE001 - a plain list call, in case an option was refused
-            data = await call("confluence.get_pages", {"limit": 100})
+        data = await call("confluence.get_pages", {"sort": "-modified-date", "limit": 100, "status": "current"})
+        if failed_payload(data):
+            raise RuntimeError(failed_payload(data))
     except Exception as e:  # noqa: BLE001
         out["failed"].append({"source": "docs:confluence", "error": explain("docs:confluence", err_text(e, 400)).rstrip(". ") + ". " + await probe_confluence(call, log)})
         return
@@ -288,8 +265,13 @@ async def fetch_confluence_v2(call: Call, since: str, log: ToolLog, out: dict, f
         out["failed"].append({"source": "docs:confluence", "error": explain("docs:confluence", bad).rstrip(". ") + ". " + await probe_confluence(call, log)})
         return
     listed = rows(data, "results")
+    if not mine_ids:  # identity refused: without account ids, verifying authorship would mean reading every page body to hunt
+        # for a name - that is exactly the broad read the spec does not authorize. Title-count only, explicit coverage limit.
+        out["capped"].append(f"confluence: read through the pages list (the CQL search was refused); the identity call was refused too, "
+                             f"so none of the {len(listed)} most recently edited pages were read - contribution could not be verified. "
+                             "Fix the Confluence connection's scopes to restore docs coverage.")
+        return
     sem = asyncio.Semaphore(DOC_PARALLEL)
-    unverified = 0
 
     async def labels_of(pid: str) -> list[str]:
         try:
@@ -308,50 +290,33 @@ async def fetch_confluence_v2(call: Call, since: str, log: ToolLog, out: dict, f
         except Exception:  # noqa: BLE001
             return {}
 
+    skipped = 0
     for h in listed[:MAX_DOCS_PER_SOURCE]:
         ver = h.get("version") or {}
         modified = str(ver.get("createdAt") or h.get("createdAt") or "")
         if modified[:10] and modified[:10] < since[:10]:
             continue
         author_id, editor_id = str(h.get("authorId") or ""), str(ver.get("authorId") or "")
-        attribution = ""
-        if mine_ids:
-            if author_id not in mine_ids and editor_id not in mine_ids:
-                continue
-            attribution = "account id from the identity call"
-        body = text_of(h.get("body") or {})
-        author_name = editor_name = ""
-        if not mine_ids or not body:
-            page = await detail(str(h.get("id", "")))
-            if page:
-                body = body or text_of(page.get("body") or {})
-                hist, pver = page.get("history") or {}, page.get("version") or {}
-                author_name = str((hist.get("createdBy") or {}).get("displayName") or "")
-                editor_name = str((pver.get("by") or {}).get("displayName") or "")
-        named = author_name if name_match(author_name, names) else (editor_name if name_match(editor_name, names) else "")
-        bylined = byline_match(body, names)
-        if not attribution and not named and not bylined:
-            unverified += 1
-            continue
+        if author_id not in mine_ids and editor_id not in mine_ids:
+            skipped += 1
+            continue  # not created or edited by the connected account: never opened
+        page = await detail(str(h.get("id", "")))  # body and display names are fetched only for verified pages
+        body = text_of((page or {}).get("body") or {})
+        hist, pver = (page or {}).get("history") or {}, (page or {}).get("version") or {}
+        author_name = str((hist.get("createdBy") or {}).get("displayName") or "")
+        editor_name = str((pver.get("by") or {}).get("displayName") or "")
         links = h.get("_links") or {}
         base = str((find_key(data, "base") or "")).rstrip("/")
         web = str(links.get("webui") or "")
-        mine_name = my_name or (names[0] if names else "")
-        verified = bool(attribution)
-        if not verified:  # a name or byline on the page is a claim, not identity: keep the page, do not credit it
-            attribution = (f"page names '{named}' as author/editor (unverified)" if named
-                           else f"owner/author byline naming '{bylined}' (unverified)")
         out["docs"].append({
             "_source": "confluence", "id": str(h.get("id", "")), "title": h.get("title") or "", "body": body,
-            "labels": await labels_of(str(h.get("id", ""))), "author": author_name or (mine_name if author_id in mine_ids else ""),
-            "editors": [editor_name] if editor_name else ([mine_name] if editor_id in mine_ids and mine_name else []),
+            "labels": await labels_of(str(h.get("id", ""))), "author": author_name or my_name,
+            "editors": [editor_name] if editor_name else ([my_name] if my_name else []),
             "created": str(h.get("createdAt") or ""), "modified": modified, "url": (base + web) if web.startswith("/") and base else web,
-            "_mine": verified, "_attribution": attribution, "kind": "confluence page"})
+            "_mine": True, "_attribution": "account id from the identity call", "kind": "confluence page"})
     note = "confluence: read through the pages list (the CQL search was refused); only the 100 most recently edited pages were checked"
-    if not mine_ids:
-        note += "; the identity call was refused, so pages naming you as author, editor or owner are listed but not credited as yours"
-        if unverified:
-            note += f"; {unverified} page(s) with no author, editor or owner name matching you were not used"
+    if skipped:
+        note += f"; {skipped} page(s) not created or edited by your account were not read"
     out.setdefault("capped", []).append(note)
 
 
@@ -430,8 +395,8 @@ async def notion_user_id(call: Call, names: list[str], log: ToolLog, out: dict) 
 
 
 async def fetch_notion(call: Call, since: str, log: ToolLog, out: dict, names: list[str] | None = None) -> None:
-    """Recent pages; a page is credited when its creator/editor id is the matched Notion user, or its text names the user in
-    an explicit Owner/Author byline. Everything else is left out and counted in the note."""
+    """Recent pages. The API forces a broad LIST (no author filter exists), but not broad READS: a page's body is fetched
+    only after its creator/editor id matches the resolved Notion user. Everything else is never opened, and counted."""
     names = names or []
     me = await notion_user_id(call, names, log, out)
     pages: list[dict] = []
@@ -456,6 +421,11 @@ async def fetch_notion(call: Call, since: str, log: ToolLog, out: dict, names: l
         return str((x or {}).get("id", "")) if isinstance(x, dict) else ""
 
     recent = [p for p in pages if str(p.get("last_edited_time", "")) >= since][:MAX_DOCS_PER_SOURCE]
+    if not me:  # no verified user id: reading bodies to hunt for name evidence is not authorized - nothing is opened
+        if recent:
+            out["capped"].append(f"notion: your Notion user could not be verified, so none of the {len(recent)} recent page(s) were read. "
+                                 "Set display_name to your Notion name or email to restore docs coverage.")
+        return
     sem = asyncio.Semaphore(DOC_PARALLEL)
     unverified = 0
 
@@ -468,7 +438,9 @@ async def fetch_notion(call: Call, since: str, log: ToolLog, out: dict, names: l
     async def one(p: dict) -> None:
         nonlocal unverified
         cb, eb = uid(p.get("created_by")), uid(p.get("last_edited_by"))
-        attribution = "notion user id" if me and me in (cb, eb) else ""
+        if me not in (cb, eb):
+            unverified += 1
+            return  # creator/editor ids come with the listing; no match means the body is never fetched
         body, body_failed = "", False
         try:
             log.add("notion.get_page_markdown", id=p.get("id"))
@@ -476,24 +448,48 @@ async def fetch_notion(call: Call, since: str, log: ToolLog, out: dict, names: l
         except Exception as e:  # noqa: BLE001 - the page is still listed from its title; only the preview is missing
             body_failed = True
             out["failed"].append({"source": f"docs:notion:{title(p) or p.get('id')}", "error": "page text could not be read, so it is listed by title only (" + err_text(e) + ")"})
-        bylined = "" if attribution else byline_match(body, names)
-        if not attribution and not bylined:
-            unverified += 1
-            return
-        if not attribution:  # a byline is a claim in the page text, not identity: keep the page, do not credit it
-            attribution = f"owner/author byline naming '{bylined}' (unverified)"
         out["docs"].append({"_source": "notion", "id": p.get("id"), "title": title(p), "body": body, "labels": [],
-                            "author": names[0] if (me and cb == me and names) else "", "editors": [names[0]] if (me and eb == me and names) else [],
+                            "author": names[0] if (cb == me and names) else "", "editors": [names[0]] if (eb == me and names) else [],
                             "created": p.get("created_time", ""), "modified": p.get("last_edited_time", ""), "url": p.get("url", ""),
-                            "_mine": bool(attribution == "notion user id"), "_attribution": attribution, "kind": "notion page", "body_failed": body_failed})
+                            "_mine": True, "_attribution": "notion user id", "kind": "notion page", "body_failed": body_failed})
 
     await asyncio.gather(*(one(p) for p in recent))
     if unverified:
-        out["capped"].append(f"notion: {unverified} recently edited page(s) could not be verified as yours and were not used")
+        out["capped"].append(f"notion: {unverified} recently edited page(s) were not created or edited by your Notion user and were not read")
 
 
 # ----------------------------------------------------------- Google Drive
+MAX_DRIVE_REVISION_CHECKS = 20  # revision listing costs one call per unresolved doc; bound it like every other detail read
+
+
+def _same_account(person: Any, me: dict) -> bool:
+    """Email addresses decide. Display names are claims, and a blank side (anonymous edits leave the field empty) proves nothing."""
+    a = str((person or {}).get("emailAddress") or "").lower()
+    b = str(me.get("emailAddress") or "").lower()
+    return bool(a) and bool(b) and a == b
+
+
+async def drive_identity(call: Call, log: ToolLog, out: dict) -> dict:
+    """The connected Drive account, from its own about record. No record, no credit: without it no doc can be tied to the user."""
+    try:
+        log.add("drive.get_about")
+        data = await call("drive.get_about", {"fields": "user"})
+        user = data.get("user") if isinstance(data, dict) else None
+        if not isinstance(user, dict):
+            user = find_key(data, "user")
+        if isinstance(user, dict) and (user.get("emailAddress") or user.get("displayName")):
+            return user
+        out["failed"].append({"source": "docs:drive", "error": "the connected Drive account could not be identified from its about record, so no document is read or credited"})
+    except Exception as e:  # noqa: BLE001
+        out["failed"].append({"source": "docs:drive", "error": "the connected Drive account could not be identified, so no document is read or credited: " + err_text(e, 160)})
+    return {}
+
+
 async def fetch_drive(call: Call, since: str, log: ToolLog, out: dict) -> None:
+    """Docs the connected account wrote or edited. The query only pre-filters by permission (owner/writer), and permission is
+    not contribution: a body is exported only with positive edit evidence - the account last modified the doc, or one of its
+    revisions belongs to the account. Everything else is listed by title, never read, never credited."""
+    me = await drive_identity(call, log, out)
     q = ("trashed = false and mimeType = 'application/vnd.google-apps.document' "
          f"and modifiedTime > '{since[:10]}T00:00:00' and ('me' in owners or 'me' in writers)")
     try:
@@ -505,8 +501,43 @@ async def fetch_drive(call: Call, since: str, log: ToolLog, out: dict) -> None:
         return
     files = rows(data, "files")[:MAX_DOCS_PER_SOURCE]
     sem = asyncio.Semaphore(DOC_PARALLEL)
+    unverified = 0
+    revision_checks = 0
+    history_gaps = 0
+
+    async def edited(f: dict) -> bool:
+        nonlocal revision_checks, history_gaps
+        if not me:
+            return False
+        if _same_account(f.get("lastModifyingUser"), me):
+            return True
+        if revision_checks >= MAX_DRIVE_REVISION_CHECKS:
+            return False
+        revision_checks += 1
+        try:  # Docs coalesces and prunes revisions: history can prove an older edit, but its absence proves nothing
+            log.add("drive.list_revisions", id=f.get("id"))
+            data = await _gather(sem, call, "drive.list_revisions", {"fileId": f.get("id"), "pageSize": 200,
+                                                                     "fields": "revisions(id,modifiedTime,lastModifyingUser(displayName,emailAddress))"})
+        except Exception:  # noqa: BLE001
+            history_gaps += 1
+            return False
+        revs = rows(data, "revisions")
+        if not revs:
+            history_gaps += 1
+        return any(_same_account(r.get("lastModifyingUser"), me) for r in revs)
 
     async def one(f: dict) -> None:
+        nonlocal unverified
+        owner = (f.get("owners") or [{}])[0]
+        base = {"_source": "drive", "id": f.get("id"), "title": f.get("name", ""), "labels": [],
+                "author": owner.get("displayName") or owner.get("emailAddress") or "",
+                "editors": [(f.get("lastModifyingUser") or {}).get("displayName") or ""],
+                "created": f.get("createdTime", ""), "modified": f.get("modifiedTime", ""), "url": f.get("webViewLink", ""), "kind": "google doc"}
+        if not await edited(f):
+            unverified += 1
+            out["docs"].append({**base, "body": "", "_mine": False, "body_failed": True,
+                                "_attribution": "access only - owning or being able to edit is not contribution; no edit evidence found, so the body was not read"})
+            return
         body, body_failed = "", False
         try:
             log.add("drive.export_google_workspace_file", id=f.get("id"))
@@ -514,12 +545,15 @@ async def fetch_drive(call: Call, since: str, log: ToolLog, out: dict) -> None:
         except Exception as e:  # noqa: BLE001
             body_failed = True
             out["failed"].append({"source": f"docs:drive:{f.get('name') or f.get('id')}", "error": "doc text could not be read, so it is listed by title only (" + err_text(e) + ")"})
-        owner = (f.get("owners") or [{}])[0]
-        out["docs"].append({"_source": "drive", "id": f.get("id"), "title": f.get("name", ""), "body": (body + " " + (f.get("description") or "")).strip(), "labels": [],
-                            "author": owner.get("displayName") or owner.get("emailAddress") or "", "editors": [(f.get("lastModifyingUser") or {}).get("displayName") or ""],
-                            "created": f.get("createdTime", ""), "modified": f.get("modifiedTime", ""), "url": f.get("webViewLink", ""), "_mine": True, "kind": "google doc", "body_failed": body_failed})
+        out["docs"].append({**base, "body": (body + " " + (f.get("description") or "")).strip(),
+                            "_mine": True, "body_failed": body_failed,
+                            "_attribution": "edit evidence: the connected account last modified the doc or owns one of its revisions"})
 
     await asyncio.gather(*(one(f) for f in files))
+    if unverified:
+        out["capped"].append(f"drive: {unverified} doc(s) you can access had no proof you wrote or edited them - listed by title only, bodies not read, not credited")
+    if history_gaps:
+        out["capped"].append(f"drive: edit history was missing or unreadable for {history_gaps} doc(s); genuine older edits may exist that cannot be proven")
 
 
 # ------------------------------------------------------- Slack by search
