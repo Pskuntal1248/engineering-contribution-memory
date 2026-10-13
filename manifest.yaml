@@ -134,6 +134,8 @@ permissions:
     - notion.list_users
     - drive.find_file
     - drive.export_google_workspace_file
+    - drive.get_about
+    - drive.list_revisions
     - slack.search_messages
     - slack.fetch_message_thread_from_a_conversation
     - slack.list_channels
