@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from guards import ToolLog, channels_to_read, parse_channels
 from pipeline import Config, ingest
 from sources import GatewaySource
-from test_adapters import Gateway, HAS, ME, SINCE
+from test_adapters import Gateway, HAS, ME, NOW, SINCE
 from test_fixes3 import CFG, commit_dict, pr_dict, raw
 
 
@@ -142,3 +142,55 @@ def test_refused_jira_blocks_github_slack_and_docs():
     assert {n for n, _ in gw.calls} <= DISCOVERY  # the valid Slack channels and repos are not read either
     assert out["github"] == {"prs": [], "reviews": {}, "commits": []} and out["docs"] == [] and out["slack"]["threads"] == []
     assert any(f["source"] == "preflight" for f in out["failed"])
+
+
+# ------------------------------------------ a blocked run saves nothing and says it was stopped
+
+def blocked_deps(gw, store):
+    import agent
+    from store import PlatformStore
+    HAS_ALL = HAS | {"jira.get_all_projects"}
+    return agent.Deps(lambda cfg: GatewaySource(gw, cfg.username, cfg.repos, cfg.slack_channels, cfg.include_dms, cfg.jira_projects, HAS_ALL, cfg.docs_sources, cfg.name_hints),
+                      llm=None, store_factory=lambda mem: PlatformStore(store, mem), now=lambda: NOW)
+
+
+INP = {"github_username": ME, "repos_or_org": "o/r", "jira_projects": "PAY", "slack_channels": "#payments-eng",
+       "docs_source": "All three", "role_and_level": "Software Engineer", "display_name": "Parth Singh"}
+
+
+def test_blocked_first_run_saves_nothing_and_reports_blocked():
+    import agent
+    from langgraph.store.memory import InMemoryStore
+    store = InMemoryStore()
+    gw = JiraProjects()
+    g = agent.make_graph(blocked_deps(gw, store))
+    bad = dict(INP, slack_channels="payments-engr")
+    out = asyncio.run(g.ainvoke({"inputs": bad, "memory": {}}))
+    assert out["result"]["status"] == "blocked" and out["result"]["model_calls"] == 0
+    assert "Run stopped" in out["corpus"]["title"]
+    assert out["memory"] == {}  # nothing was persisted
+    assert not asyncio.run(store.asearch(("uc10", "profile"), limit=100))
+    # a later run with the input fixed backfills normally - the blocked run never marked anything done
+    gw2 = JiraProjects()
+    g2 = agent.make_graph(blocked_deps(gw2, store))
+    out2 = asyncio.run(g2.ainvoke({"inputs": INP, "memory": {}}))
+    assert out2["result"]["status"] == "completed" and out2["result"]["mode"] == "backfill" and out2["memory"]["marker"]["backfill_done"] is True
+
+
+def test_blocked_weekly_run_leaves_the_saved_profile_untouched():
+    import agent
+    from langgraph.store.memory import InMemoryStore
+    store = InMemoryStore()
+    g = agent.make_graph(blocked_deps(JiraProjects(), store))
+    out = asyncio.run(g.ainvoke({"inputs": INP, "memory": {}}))
+    assert out["result"]["status"] == "completed"
+    mem = out["memory"]
+    keys_before = {i.key: i.value for i in asyncio.run(store.asearch(("uc10", "profile"), limit=100))}
+    bad = dict(INP, slack_channels="payments-engr")
+    out2 = asyncio.run(agent.make_graph(blocked_deps(JiraProjects(), store)).ainvoke({"inputs": bad, "memory": mem}))
+    assert out2["result"]["status"] == "blocked" and out2["memory"] == mem  # saved memory passes through untouched
+    keys_after = {i.key: i.value for i in asyncio.run(store.asearch(("uc10", "profile"), limit=100))}
+    assert keys_after == keys_before  # the saved profile is byte-identical
+    # and the next good run is still a normal weekly update on the intact profile
+    out3 = asyncio.run(agent.make_graph(blocked_deps(JiraProjects(), store)).ainvoke({"inputs": INP, "memory": mem}))
+    assert out3["result"]["status"] == "completed" and out3["result"]["mode"] == "weekly"
