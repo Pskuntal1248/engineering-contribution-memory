@@ -369,9 +369,13 @@ async def fetch_confluence(call: Call, since: str, log: ToolLog, out: dict, name
 
 
 # ---------------------------------------------------------------- Notion
+EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
+
+
 async def notion_user_id(call: Call, names: list[str], log: ToolLog, out: dict) -> str:
-    """The connected user's Notion id, found by matching the workspace's people against the user's names. A workspace with
-    exactly one person is not proof that person is the user, so no name match means no id."""
+    """The connected user's Notion id, proven ONLY by an exact account-email match: the user puts their Notion account
+    email in display_name, and exactly one workspace person must carry that email. A display name is a claim any namesake
+    shares, so a name match never resolves identity - it only shapes the message explaining the gap."""
     try:
         log.add("notion.list_users")
         users = rows(await call("notion.list_users", {"page_size": 100}), "results", "users")
@@ -379,6 +383,14 @@ async def notion_user_id(call: Call, names: list[str], log: ToolLog, out: dict) 
         out["failed"].append({"source": "docs:notion", "error": f"could not list Notion users to find yours: {err_text(e, 120)}"})
         return ""
     people = [u for u in users if str(u.get("type", "person")) == "person" and str(u.get("object", "user")) == "user"]
+    emails = {m.group(0).lower() for n in names for m in EMAIL_RE.finditer(n or "")}
+    if emails:
+        hits = [u for u in people if str(((u.get("person") or {}).get("email")) or "").lower() in emails]
+        if len(hits) == 1:  # account emails are unique identifiers: this is positive evidence, not a name claim
+            return str(hits[0].get("id", ""))
+        if len(hits) > 1:
+            out["failed"].append({"source": "docs:notion", "error": "more than one Notion user carries your account email, so authorship cannot be verified"})
+            return ""
     want = [n.lower() for n in names if n]
 
     def label(u: dict) -> str:
@@ -386,11 +398,11 @@ async def notion_user_id(call: Call, names: list[str], log: ToolLog, out: dict) 
 
     matches = [u for u in people if any(w and (w in label(u) or label(u).split("@")[0].strip() == w) for w in want)]
     if len(matches) == 1:
-        return str(matches[0].get("id", ""))
-    if len(matches) > 1:  # a same-name collision is not identity evidence
-        out["failed"].append({"source": "docs:notion", "error": f"{len(matches)} Notion users match your name, so authorship cannot be verified: set display_name to your Notion email"})
+        out["failed"].append({"source": "docs:notion", "error": "a Notion user matches your name, but a matching name is not proof of identity: set display_name to your Notion account email to confirm it"})
+    elif len(matches) > 1:  # a same-name collision is not identity evidence
+        out["failed"].append({"source": "docs:notion", "error": f"{len(matches)} Notion users match your name, so authorship cannot be verified: set display_name to your Notion account email"})
     elif people:
-        out["failed"].append({"source": "docs:notion", "error": f"could not tell which of {len(people)} Notion users is you: set display_name to your Notion name"})
+        out["failed"].append({"source": "docs:notion", "error": f"could not tell which of {len(people)} Notion users is you: set display_name to your Notion account email"})
     return ""
 
 
@@ -424,7 +436,7 @@ async def fetch_notion(call: Call, since: str, log: ToolLog, out: dict, names: l
     if not me:  # no verified user id: reading bodies to hunt for name evidence is not authorized - nothing is opened
         if recent:
             out["capped"].append(f"notion: your Notion user could not be verified, so none of the {len(recent)} recent page(s) were read. "
-                                 "Set display_name to your Notion name or email to restore docs coverage.")
+                                 "Set display_name to your Notion account email to restore docs coverage.")
         return
     sem = asyncio.Semaphore(DOC_PARALLEL)
     unverified = 0
@@ -451,7 +463,7 @@ async def fetch_notion(call: Call, since: str, log: ToolLog, out: dict, names: l
         out["docs"].append({"_source": "notion", "id": p.get("id"), "title": title(p), "body": body, "labels": [],
                             "author": names[0] if (cb == me and names) else "", "editors": [names[0]] if (eb == me and names) else [],
                             "created": p.get("created_time", ""), "modified": p.get("last_edited_time", ""), "url": p.get("url", ""),
-                            "_mine": True, "_attribution": "notion user id", "kind": "notion page", "body_failed": body_failed})
+                            "_mine": True, "_attribution": "notion account email match", "kind": "notion page", "body_failed": body_failed})
 
     await asyncio.gather(*(one(p) for p in recent))
     if unverified:
