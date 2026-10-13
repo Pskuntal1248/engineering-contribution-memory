@@ -57,7 +57,7 @@ class Gateway:
         if name == "confluence.get_page_by_id":
             return {"id": "77", "body": {"storage": {"value": "<p>We decided to move webhooks to a queue</p>"}}}
         if name == "notion.list_users":
-            return {"data": {"response_data": {"results": [{"object": "user", "id": "u-me", "type": "person", "name": "Parth Singh"},
+            return {"data": {"response_data": {"results": [{"object": "user", "id": "u-me", "type": "person", "name": "Parth Singh", "person": {"email": "ps.kuntal2005@gmail.com"}},
                                                            {"object": "user", "id": "u-other", "type": "person", "name": "Other Person"},
                                                            {"object": "user", "id": "u-bot", "type": "bot", "name": "Integration"}]}}}
         if name == "notion.search_notion_page":
@@ -92,7 +92,7 @@ HAS = {"jira.search_issues", "jira.get_issue", "jira.list_issue_comments", "jira
 
 
 def fetch(gw, docs=("confluence", "notion", "google drive")):
-    src = GatewaySource(gw, ME, [], parse_channels("#payments-eng"), False, ["PAY"], HAS, list(docs), ["Parth Singh"])
+    src = GatewaySource(gw, ME, [], parse_channels("#payments-eng"), False, ["PAY"], HAS, list(docs), ["Parth Singh", "ps.kuntal2005@gmail.com"])
     return asyncio.run(src.fetch(SINCE, None, ToolLog()))
 
 
@@ -141,7 +141,7 @@ def test_full_run_uses_platform_store_and_keeps_memory_small():
     deps = agent.Deps(lambda cfg: GatewaySource(gw, cfg.username, cfg.repos, cfg.slack_channels, cfg.include_dms, cfg.jira_projects, HAS, cfg.docs_sources, cfg.name_hints),
                       llm=None, store_factory=lambda mem: PlatformStore(store, mem), now=lambda: NOW)
     inp = {"github_username": ME, "repos_or_org": "o/r", "jira_projects": "PAY", "slack_channels": "#payments-eng", "docs_source": "All three",
-           "role_and_level": "Software Engineer", "display_name": "Parth Singh"}
+           "role_and_level": "Software Engineer", "display_name": "Parth Singh, ps.kuntal2005@gmail.com"}
     g = agent.make_graph(deps)
     # no GitHub tools in the fake: that source is named as failed, the rest still works
     out = asyncio.run(g.ainvoke({"inputs": inp, "memory": {}}))
