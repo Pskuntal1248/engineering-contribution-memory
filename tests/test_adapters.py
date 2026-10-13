@@ -35,6 +35,8 @@ class Gateway:
         self.peak = max(self.peak, self.live)
         await asyncio.sleep(0.005)
         self.live -= 1
+        if name == "jira.get_all_projects":
+            return {"values": [{"key": "PAY"}]}
         if name == "jira.search_issues":
             if args.get("next_page_token") == "p2":
                 return {"issues": [issue("PAY-3", "third")], "isLast": True}
@@ -81,7 +83,7 @@ class Gateway:
         raise RuntimeError("unexpected " + name)
 
 
-HAS = {"jira.search_issues", "jira.get_issue", "jira.list_issue_comments", "confluence.cql_search", "confluence.get_page_by_id", "notion.list_users", "notion.search_notion_page",
+HAS = {"jira.search_issues", "jira.get_issue", "jira.list_issue_comments", "jira.get_all_projects", "confluence.cql_search", "confluence.get_page_by_id", "notion.list_users", "notion.search_notion_page",
        "notion.get_page_markdown", "drive.find_file", "drive.export_google_workspace_file", "slack.list_channels", "slack.read_history", "slack.search_messages",
        "slack.fetch_message_thread_from_a_conversation"}
 
