@@ -88,13 +88,17 @@ def test_confluence_pages_list_is_used_when_cql_and_identity_are_refused():
         if name == "confluence.get_labels_for_page":
             raise RuntimeError("403")
         raise RuntimeError("no")
+    calls = []
+
+    async def logged(name, args):
+        calls.append(name)
+        return await call(name, args)
+
     out = {"docs": [], "failed": [], "capped": []}
-    asyncio.run(fetch_confluence(call, "2026-01-01T00:00:00Z", ToolLog(), out, ["Parth Singh"]))
-    # the identity call is refused: a matching display name is an unverified claim - the pages are listed, not credited
-    assert [d["title"] for d in out["docs"]] == ["Payout design", "Plan"] and not out["failed"], out
-    assert out["docs"][0]["url"].startswith("https://x.atlassian.net/wiki/spaces/UTD")
-    assert all(not d["_mine"] for d in out["docs"])
-    assert out["docs"][0]["_attribution"] == "page names 'Parth Singh' as author/editor (unverified)"
+    asyncio.run(fetch_confluence(logged, "2026-01-01T00:00:00Z", ToolLog(), out, ["Parth Singh"]))
+    # CQL and the identity call are both refused: no page body may be opened to hunt for a name - the coverage gap is stated instead
+    assert out["docs"] == [] and "confluence.get_page_by_id" not in calls
+    assert any("identity call was refused too" in c and "none of the 2 most recently edited pages were read" in c for c in out["capped"])
 
 
 def test_generated_sample_pages_are_not_work_but_real_pages_are():
