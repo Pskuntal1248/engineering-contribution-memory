@@ -51,8 +51,9 @@ def _payload(raw: Any) -> Any:
 class Deps:
     """Everything the graph needs from outside. Tests pass fixtures and a fake model; graph() passes the gateway."""
 
-    def __init__(self, source_factory, llm=None, store_factory=None, now=None, embedder=None):
+    def __init__(self, source_factory, llm=None, store_factory=None, now=None, embedder=None, identity=None):
         self.source_factory, self.llm, self.store_factory, self.embedder = source_factory, llm, store_factory, embedder
+        self.identity = identity  # async () -> {"login": ..., "name": ...} read from the connected GitHub account; None when unavailable
         self.now = now or (lambda: datetime.now(timezone.utc))
 
 
@@ -80,8 +81,24 @@ def make_graph(deps: Deps):
         return t.astimezone(local_tz(inp.get("timezone"))) if t.tzinfo else t
 
     async def load(state: State) -> dict:
-        inp = state.get("inputs", {})
+        inp = dict(state.get("inputs", {}))
         mem = state.get("memory")
+        id_notes: list[str] = []
+        if not str(inp.get("github_username") or "").strip():  # the user's typed value always wins; only a blank is filled from the connected account
+            who: dict = {}
+            if deps.identity:
+                try:
+                    who = await deps.identity() or {}
+                except Exception:  # noqa: BLE001
+                    who = {}
+            login = str(who.get("login") or "").strip()
+            if login:
+                inp["github_username"] = login
+                id_notes.append(f"GitHub username taken from the connected GitHub account: {login}. If that is not you, type your username in the form and run again")
+                if not str(inp.get("display_name") or "").strip() and str(who.get("name") or "").strip():
+                    inp["display_name"] = str(who["name"]).strip()
+            else:
+                raise RuntimeError("Could not read your GitHub username from the connected GitHub account. Connect GitHub, or type your username in 'Your GitHub username' and run again.")
         if deps.store_factory:
             store = deps.store_factory(mem)
         else:
@@ -102,7 +119,7 @@ def make_graph(deps: Deps):
             req = "weekly" if prior.get("backfill_done") else "backfill"  # weekly only after a backfill really completed
         if req in ON_DEMAND and not has_memory:
             req = "backfill"  # nothing to report from yet
-        return {"ctx": {"started": time.monotonic(), "mode": req, "prior": prior, "store": store, "notes": (["memory was unreadable, starting fresh"] if prior.get("_corrupt") else (["the saved history was missing from the store, so this run backfills again"] if prior.get("_store_empty") else []))}}
+        return {"inputs": inp, "ctx": {"started": time.monotonic(), "mode": req, "prior": prior, "store": store, "notes": id_notes + (["memory was unreadable, starting fresh"] if prior.get("_corrupt") else (["the saved history was missing from the store, so this run backfills again"] if prior.get("_store_empty") else []))}}
 
     async def fetch(state: State) -> dict:
         ctx = state["ctx"]
@@ -180,7 +197,7 @@ def make_graph(deps: Deps):
         quiet = quiet_week_line(since, local_now(inp).strftime("%Y-%m-%d")) if mode in {"weekly", "weekly_summary"} and not window else None
         title = {"backfill": "Engineering profile", "weekly": "Weekly update", "weekly_summary": "Weekly summary", "one_on_one": "1:1 talking points",
                  "review_material": "Review material", "interview_stories": "Interview stories", "evidence_gaps": "Evidence gaps"}[mode]
-        corpus, result = outputs.corpus_for(mode, prof, items, title=f"{title} - {cfg.username}", terms=terms, keep_internal=str(inp.get("keep_internal_details", "No")).lower() == "yes",
+        corpus, result = outputs.corpus_for(mode, prof, items, title=f"{title} - {cfg.username}" if cfg.username else title, terms=terms, keep_internal=str(inp.get("keep_internal_details", "No")).lower() == "yes",
                                             colleagues=colleagues, names=names, date_from=str(inp.get("period_from", "") or ""), date_to=str(inp.get("period_to", "") or ""),
                                             run_notes=ctx["notes"], failed=ctx["failed"], quiet_line=quiet, new_ids=window, window_label=window_label)
         result["model_calls"] = ctx["budget"].calls
@@ -251,7 +268,15 @@ async def graph():
     from embed import GatewayEmbedder
     embedder = GatewayEmbedder(os.environ["GRAVITY_LLM_URL"], token)
 
+    async def identity():
+        if "github.get_the_authenticated_user" not in has:
+            return {}
+        me = await call("github.get_the_authenticated_user", {})
+        from adapters import find_key
+        return {"login": find_key(me, "login"), "name": find_key(me, "name")}
+
     def source_factory(cfg: Config):
         return GatewaySource(call, cfg.username, cfg.repos, cfg.slack_channels, cfg.include_dms, cfg.jira_projects, has, cfg.docs_sources, cfg.name_hints)
 
-    return make_graph(Deps(source_factory, llm, embedder=embedder))
+    return make_graph(Deps(source_factory, llm, embedder=embedder, identity=identity))
+
