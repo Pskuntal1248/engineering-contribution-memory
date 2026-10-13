@@ -296,8 +296,6 @@ class GatewaySource:
             out["slack"]["channels"] = chans
             from guards import channels_to_read, is_dm_channel
             picked, missing = channels_to_read(chans, self.slack_channels, self.include_dms, log)
-            if self.include_dms and not any(is_dm_channel(c) for c in picked):
-                out["capped"].append("include_dms=Yes but no DM was listed: add a person's Slack user ID (or *dm* for all) to the channels box to read it")
             visible = sorted(str(c.get("name", "")) for c in chans if not is_dm_channel(c) and c.get("name"))
             for m in missing:
                 close = difflib.get_close_matches(m.lower(), [v.lower() for v in visible], n=3, cutoff=0.6)
@@ -308,9 +306,16 @@ class GatewaySource:
                     + f"Channels it can see: {shown}. "
                     "Rerun with the exact name or the channel ID. A private channel is only listed when the connected account is a member; "
                     "if the connection is older than the private channel, reconnect it so private channels are readable.")})
+            unreadable = 0
             for ch in picked:
                 if ch.get("is_member") is False:
+                    unreadable += 1
                     out["failed"].append({"source": f"slack:#{ch.get('name', '')}", "error": "connected Slack account is not a member of this channel; join it, then rerun"})
+            if missing or unreadable:  # every named channel must resolve before anything is read
+                out["failed"].append({"source": "slack", "error": f"{len(missing) + unreadable} named channel(s) could not be verified, so no Slack reading was done at all. Fix the channels box and rerun."})
+                return
+            if self.include_dms and not any(is_dm_channel(c) for c in picked):
+                out["capped"].append("include_dms=Yes but no DM was listed: add a person's Slack user ID (or *dm* for all) to the channels box to read it")
             if "slack.search_messages" in self.has and "slack.fetch_message_thread_from_a_conversation" in self.has:
                 import adapters
                 await adapters.fetch_slack_search(self.call, [c for c in picked if not is_dm_channel(c)], since, log, out)
