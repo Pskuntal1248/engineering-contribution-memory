@@ -82,13 +82,19 @@ def test_confluence_pages_list_is_used_when_cql_and_identity_are_refused():
                  "body": {"storage": {"value": "<p>Design of retries</p>"}}, "_links": {"webui": "/spaces/UTD/pages/65930"}},
                 {"id": "65931", "title": "Plan", "authorId": "acc1", "createdAt": "2026-09-22T10:00:00Z", "version": {"createdAt": "2026-09-22T10:00:00Z", "authorId": "acc1"},
                  "body": {"storage": {"value": "<p>Confidential plan</p>"}}}], "_links": {"base": "https://x.atlassian.net/wiki"}}}
+        if name == "confluence.get_page_by_id":
+            return {"id": args["id"], "body": {"storage": {"value": "<p>Design of retries</p>"}},
+                    "history": {"createdBy": {"displayName": "Parth Singh"}}, "version": {"by": {"displayName": "Parth Singh"}}}
         if name == "confluence.get_labels_for_page":
             raise RuntimeError("403")
         raise RuntimeError("no")
     out = {"docs": [], "failed": [], "capped": []}
-    asyncio.run(fetch_confluence(call, "2026-01-01T00:00:00Z", ToolLog(), out))
-    assert len(out["docs"]) == 2 and not out["failed"], out
+    asyncio.run(fetch_confluence(call, "2026-01-01T00:00:00Z", ToolLog(), out, ["Parth Singh"]))
+    # the identity call is refused: a matching display name is an unverified claim - the pages are listed, not credited
+    assert [d["title"] for d in out["docs"]] == ["Payout design", "Plan"] and not out["failed"], out
     assert out["docs"][0]["url"].startswith("https://x.atlassian.net/wiki/spaces/UTD")
+    assert all(not d["_mine"] for d in out["docs"])
+    assert out["docs"][0]["_attribution"] == "page names 'Parth Singh' as author/editor (unverified)"
 
 
 def test_generated_sample_pages_are_not_work_but_real_pages_are():
@@ -434,3 +440,4 @@ def test_help_given_threads_count_toward_mentoring_expectation():
     from models import Item
     t = [Item(id=f"t{n}", source="slack", type="thread", date="2026-10-10T00:00:00Z", title="q", text="x", meta={"label": lab}) for n, lab in ((1, "mentoring"), (2, "help_given"), (3, "problem_solved"))]
     assert map_evidence(Expectation("E1", "next", "Mentors junior engineers"), t) == ["t1", "t2"]
+
