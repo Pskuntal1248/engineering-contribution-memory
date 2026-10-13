@@ -51,9 +51,9 @@ def _payload(raw: Any) -> Any:
 class Deps:
     """Everything the graph needs from outside. Tests pass fixtures and a fake model; graph() passes the gateway."""
 
-    def __init__(self, source_factory, llm=None, store_factory=None, now=None, embedder=None, identity=None, site=None, probe=None):
+    def __init__(self, source_factory, llm=None, store_factory=None, now=None, embedder=None, identity=None, site=None):
         self.source_factory, self.llm, self.store_factory, self.embedder = source_factory, llm, store_factory, embedder
-        self.site, self.probe = site, probe  # site: async () -> Jira base URL from the connected Jira; probe: async (login, repos) -> True/False/None (None = could not check)
+        self.site = site  # async () -> Jira base URL from the connected Jira; None when unavailable
         self.identity = identity  # async () -> {"login": ..., "name": ...} read from the connected GitHub account; None when unavailable
         self.now = now or (lambda: datetime.now(timezone.utc))
 
@@ -100,18 +100,6 @@ def make_graph(deps: Deps):
                     inp["display_name"] = str(who["name"]).strip()
             else:
                 raise RuntimeError("Could not read your GitHub username from the connected GitHub account. Connect GitHub, or type your username in 'Your GitHub username' and run again.")
-        req0 = str(inp.get("request") or "auto")
-        reads_sources = req0 in {"auto", "weekly_update"} or not (mem or {})  # on-demand modes read the saved profile only
-        if id_notes and reads_sources and deps.probe:  # a login taken from the account is checked BEFORE any contribution is read
-            repos = [r.strip() for r in str(inp.get("repos_or_org", "")).replace("\n", ",").split(",") if r.strip()]
-            ok = None
-            try:
-                ok = await deps.probe(inp["github_username"], repos)
-            except Exception:  # noqa: BLE001
-                ok = None
-            if ok is not True:
-                raise RuntimeError(f"Stopped before reading anything: the connected GitHub account is '{inp['github_username']}', but I could not confirm it has any activity in the repos you listed"
-                                   + (" (the check failed)" if ok is None else "") + ". Connect the right GitHub account, or type your GitHub username and run again.")
         if deps.site and not str(inp.get("jira_site") or "").strip():  # (graph() always wires deps.site)
             base = ""
             if True:
@@ -306,19 +294,8 @@ async def graph():
         from adapters import find_key
         return find_key(await call("jira.get_server_info", {}), "baseUrl", "base_url")
 
-    async def probe(login: str, repos: list[str]):
-        if "github.search_issues" not in has or not repos:
-            return None
-        from adapters import find_key
-        for r in repos:
-            res = await call("github.search_issues", {"q": f"repo:{r} involves:{login}", "per_page": 1})
-            n = find_key(res, "total_count")
-            if (isinstance(n, int) and n > 0) or (isinstance(res, dict) and res.get("items")) or (isinstance(res, dict) and isinstance(res.get("data"), dict) and res["data"].get("items")):
-                return True
-        return False
-
     def source_factory(cfg: Config):
         return GatewaySource(call, cfg.username, cfg.repos, cfg.slack_channels, cfg.include_dms, cfg.jira_projects, has, cfg.docs_sources, cfg.name_hints)
 
-    return make_graph(Deps(source_factory, llm, embedder=embedder, identity=identity, site=site, probe=probe))
+    return make_graph(Deps(source_factory, llm, embedder=embedder, identity=identity, site=site))
 
