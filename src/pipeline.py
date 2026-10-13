@@ -55,18 +55,29 @@ def infer_merged(prs: list[dict], commits: list[dict]) -> None:
                 break
 
 
-def covered_by_pr(c: Item, prs: list[dict]) -> bool:
-    """A commit that is part of one of the user's PRs: same title, or only files the PR touched, made inside the PR's life."""
+def _pr_head(p: dict) -> str:
+    return (p.get("head") or {}).get("ref", "") if isinstance(p.get("head"), dict) else str(p.get("head") or "")
+
+
+def covered_by_pr(c: Item, prs: list[dict], canon: Any = None, pkeys: dict[int, list[str]] | None = None) -> bool:
+    """A commit that is part of one of the user's PRs, on relation evidence only: the same ticket key inside the PR's life
+    (old keys resolved through the tickets' alias records; PR keys include branch-name keys), or only files the PR touched
+    inside its life. A same or similar title never merges a commit - same titles can be independent work, so an uncertain
+    commit stays its own row."""
     cd = N.parse_ts(c.date)
     cpaths = set(c.meta.get("paths") or [])
-    for p in prs:
+    canon = canon or (lambda k: k)
+    ckeys = {canon(k) for k in c.keys}
+    for i, p in enumerate(prs):
         if p.get("_repo") != c.meta.get("repo") or N._login(p.get("user")).lower() != str(c.author).lower():
             continue
-        if (p.get("title") or "").strip() and (p.get("title") or "").strip() == c.title.strip():
-            return True
         start, end = N.parse_ts(p.get("created_at")), N.parse_ts(N.pr_merged_at(p) or p.get("closed_at"))
+        if not (cd and start and end and start.timestamp() - 7 * 86400 <= cd.timestamp() <= end.timestamp() + 120):
+            continue
+        if ckeys and pkeys and ckeys & {canon(k) for k in pkeys.get(i, [])}:
+            return True
         ppaths = {f.get("filename") for f in (p.get("files") or []) if isinstance(f, dict)}
-        if cd and start and end and cpaths and ppaths and cpaths <= ppaths and start.timestamp() - 7 * 86400 <= cd.timestamp() <= end.timestamp() + 120:
+        if cpaths and ppaths and cpaths <= ppaths:
             return True
     return False
 
@@ -164,6 +175,18 @@ def ingest(raw: dict[str, Any], cfg: Config, log: ToolLog | None = None) -> Inge
                 continue
             if reviewer.lower() == cfg.username.lower() or pr_author.lower() == cfg.username.lower():
                 take(N.normalize_review(rv, cfg.repo_aliases.get(repo, repo), int(num), pr_author, pr.get("html_url", ""), cfg.username, cfg.jira_projects))
+    alias: dict[str, str] = {}  # moved tickets: the old key in a branch or commit message resolves to the current key
+    for t in raw.get("jira", []):
+        x = N.normalize_ticket(t, cfg.jira_site, cfg.name_hints)
+        if isinstance(x, Item) and x.keys:
+            for old in x.meta.get("aliases", []):
+                alias.setdefault(str(old), x.keys[0])
+        take(x)
+
+    def canon(k: str) -> str:
+        return alias.get(k, k)
+
+    pr_keys = {i: N.ticket_keys(_pr_head(p), p.get("title") or "", p.get("body") or "", projects=cfg.jira_projects) for i, p in enumerate(prs)}
     pr_nums = {(p.get("_repo", ""), str(p.get("number"))) for p in prs}
     for c in raw.get("github", {}).get("commits", []):
         x = N.normalize_commit(c, c.get("_repo", ""), cfg.username, cfg.jira_projects)
@@ -174,11 +197,9 @@ def ingest(raw: dict[str, Any], cfg: Config, log: ToolLog | None = None) -> Inge
                 x = Skipped(x.id, "commit by someone else")
             elif first.startswith("Merge ") or (m and (c.get("_repo", ""), m.group(1)) in pr_nums):
                 x = Skipped(x.id, "merge commit or commit already counted through its PR")
-            elif covered_by_pr(x, prs):
-                x = Skipped(x.id, "commit already counted through its PR (same title or same files, inside the PR's dates)")
+            elif covered_by_pr(x, prs, canon, pr_keys):
+                x = Skipped(x.id, "commit already counted through its PR (a shared ticket key or the same files, inside the PR's dates)")
         take(x)
-    for t in raw.get("jira", []):
-        take(N.normalize_ticket(t, cfg.jira_site, cfg.name_hints))
     gap_burst = 600.0
     channels = raw.get("slack", {}).get("channels", [])
     picked, missing = channels_to_read(channels, cfg.slack_channels, cfg.include_dms, log)
@@ -220,3 +241,4 @@ def ingest(raw: dict[str, Any], cfg: Config, log: ToolLog | None = None) -> Inge
     for i in items:
         counts[i.type] = counts.get(i.type, 0) + 1
     return Ingest(items, skipped, dups, dm_dropped, missing, counts)
+
