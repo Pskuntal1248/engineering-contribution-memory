@@ -133,15 +133,20 @@ def test_confluence_v2_identity_refused_drops_unverifiable_pages():
         if name == "confluence.get_labels_for_page":
             return {"results": []}
         raise RuntimeError("no")
+    calls = []
+
+    async def logged(name, args):
+        calls.append(name)
+        return await call(name, args)
+
     out = {"docs": [], "failed": [], "capped": []}
-    asyncio.run(fetch_confluence(call, "2026-01-01T00:00:00Z", ToolLog(), out, ["Parth Singh"]))
-    got = {d["title"]: (d["_attribution"], d["_mine"]) for d in out["docs"]}
-    # the byline page is kept as an attributed claim, never as verified authorship; the rest are dropped
-    assert got == {"Page 2": ("owner/author byline naming 'Parth Singh' (unverified)", False)}
-    assert any("2 page(s) with no author, editor or owner name matching you were not used" in c for c in out["capped"])
+    asyncio.run(fetch_confluence(logged, "2026-01-01T00:00:00Z", ToolLog(), out, ["Parth Singh"]))
+    # identity refused: not even the page carrying an Owner byline is opened - a byline is a claim, and finding it means reading the body
+    assert out["docs"] == [] and "confluence.get_page_by_id" not in calls
+    assert any("identity call was refused too" in c and "none of the 3 most recently edited pages were read" in c for c in out["capped"])
 
 
-def test_notion_byline_credits_and_unknown_pages_are_dropped():
+def test_notion_bodies_are_read_only_for_id_verified_pages():
     from adapters import fetch_notion
     from guards import ToolLog
 
@@ -159,12 +164,19 @@ def test_notion_byline_credits_and_unknown_pages_are_dropped():
         if name == "notion.get_page_markdown":
             return {"markdown": {"n2": "Owner: Parth Singh\nbody", "n1": "design text", "n3": "other text"}[args["page_id"]]}
         raise RuntimeError("no")
+    reads = []
+
+    async def logged(name, args):
+        if name == "notion.get_page_markdown":
+            reads.append(args["page_id"])
+        return await call(name, args)
+
     out = {"docs": [], "failed": [], "capped": []}
-    asyncio.run(fetch_notion(call, "2026-01-01T00:00:00Z", ToolLog(), out, ["Parth Singh"]))
+    asyncio.run(fetch_notion(logged, "2026-01-01T00:00:00Z", ToolLog(), out, ["Parth Singh"]))
     got = {d["title"]: (d["_attribution"], d["_mine"]) for d in out["docs"]}
-    assert got == {"Mine by id": ("notion user id", True),
-                   "Byline page": ("owner/author byline naming 'Parth Singh' (unverified)", False)}
-    assert any("1 recently edited page(s) could not be verified" in c for c in out["capped"])
+    # only the id-verified page is opened or kept; the byline page is never read, because finding a byline means reading the body
+    assert got == {"Mine by id": ("notion user id", True)} and reads == ["n1"]
+    assert any("2 recently edited page(s) were not created or edited by your Notion user and were not read" in c for c in out["capped"])
 
 
 def test_same_name_author_does_not_confer_decision_leadership():
@@ -216,6 +228,6 @@ def test_notion_same_name_collision_credits_nothing():
         raise RuntimeError("no")
     out = {"docs": [], "failed": [], "capped": []}
     asyncio.run(fetch_notion(call, "2026-01-01T00:00:00Z", ToolLog(), out, ["Parth Singh"]))
-    assert out["docs"] == []  # no verified id and no byline: nothing is credited
+    assert out["docs"] == []  # an ambiguous identity match credits and reads nothing
     assert any("2 Notion users match your name" in f["error"] for f in out["failed"])
-    assert any("could not be verified as yours" in c for c in out["capped"])
+    assert any("your Notion user could not be verified, so none of the 1 recent page(s) were read" in c for c in out["capped"])
