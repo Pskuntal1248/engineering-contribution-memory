@@ -124,16 +124,19 @@ def build(seed: int = 7, offset: int = 0) -> dict:
     for i in range(28):
         pid = r.choice(list(PROJECTS))
         docs.append({"id": f"d{i}", "title": f"{PROJECTS[pid]['name']} notes {i}", "body": f"Notes on {PROJECTS[pid]['words']}. " + (f"Ticket {PROJECTS[pid]['key']}-{r.randint(401,430)}." if i % 2 else ""),
-                     "author": "Meera Joshi" if i % 3 == 0 else r.choice(OTHERS), "editors": ["Meera Joshi"] if i % 3 else [], "modified": _ts(START + timedelta(days=r.randint(0, 170))), "url": f"https://acme.atlassian.net/wiki/spaces/ENG/pages/{1000+i}", "labels": []})
+                     "author": "Meera Joshi" if i % 3 == 0 else r.choice(OTHERS), "editors": ["Meera Joshi"] if i % 3 else [], "modified": _ts(START + timedelta(days=r.randint(0, 170))), "url": f"https://acme.atlassian.net/wiki/spaces/ENG/pages/{1000+i}", "labels": [],
+                     "_mine": True, "_attribution": "CQL creator/contributor = currentUser() filter"})
     decisions = [("P2", "ADR: move webhooks to a queue", "We decided to deliver webhooks through a queue instead of inline calls. Options: inline retry, cron replay, queue. Chosen: queue. Proposed by Meera Joshi; platform team consulted.", "led"),
                  ("P1", "ADR: idempotency keys on payouts", "Decision: use client generated idempotency keys stored for 24h. Alternatives rejected: dedupe table. Author Meera Joshi.", "led"),
                  ("P5", "ADR: tokens before components", "Decision: migrate design tokens first, components after. Meera contributed the comparison; decided by Sam Lee.", "contributed")]
     for k, (pid, title, body, role) in enumerate(decisions):
         d = {"id": f"adr{k}", "title": title, "body": body + f" {PROJECTS[pid]['words']}", "author": "Meera Joshi" if role == "led" else "Sam Lee", "editors": ["Meera Joshi"], "modified": _ts(START + timedelta(days=40 + k * 30)),
+             "_mine": True, "_attribution": "CQL creator/contributor = currentUser() filter",
              "url": f"https://acme.atlassian.net/wiki/spaces/ENG/pages/{2000+k}", "labels": ["adr"]}
         docs.append(d)
         ex["decisions"].append({"id": f"doc:confluence:adr{k}", "role": role})
     conf = {"id": "conf1", "title": "Q3 Payments pricing plan (confidential)", "body": "CONFIDENTIAL. Do not share. Pricing for Globex Foods renewal.", "author": "Meera Joshi", "editors": [], "modified": _ts(START + timedelta(days=100)),
+            "_mine": True, "_attribution": "CQL creator/contributor = currentUser() filter",
             "url": "https://acme.atlassian.net/wiki/spaces/FIN/pages/3000", "labels": []}
     docs.append(conf)
     ex["confidential_doc"] = "doc:confluence:conf1"
@@ -222,8 +225,10 @@ SE III (next level)
     for k in range(5):
         w2.append(thread("payments-eng", [f"webhook queue follow up {k}", "ack"], [ME, "Arjun Rao"], base + timedelta(days=k, hours=3)))
     for k in range(2):
-        docs.append({"id": f"w2d{k}", "title": f"Webhook queue runbook {k}", "body": "queue runbook", "author": "Meera Joshi", "editors": [], "modified": _ts(base + timedelta(days=k)), "url": f"https://acme.atlassian.net/wiki/spaces/ENG/pages/{4000+k}", "labels": []})
+        docs.append({"id": f"w2d{k}", "title": f"Webhook queue runbook {k}", "body": "queue runbook", "author": "Meera Joshi", "editors": [], "modified": _ts(base + timedelta(days=k)), "url": f"https://acme.atlassian.net/wiki/spaces/ENG/pages/{4000+k}", "labels": [],
+                     "_mine": True, "_attribution": "CQL creator/contributor = currentUser() filter"})
         w2.append(f"doc:confluence:w2d{k}")
     ex["week2_ids"] = w2
     ex["week2_start"] = _ts(base - timedelta(hours=1))
     return {"github": gh, "jira": jira, "slack": slack, "docs": docs, "expected": ex}
+
