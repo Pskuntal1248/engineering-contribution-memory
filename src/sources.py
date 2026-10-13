@@ -5,6 +5,7 @@ A source that fails or does not exist is named in `failed`, never silently empty
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
 import re
 import time
@@ -108,7 +109,7 @@ class GatewaySource:
 
         async def jira_part() -> None:
             if "jira.search_issues" in self.has:
-                await adapters.fetch_jira(self.call, self.jira_projects, since, log, out)
+                await adapters.fetch_jira(self.call, self.jira_projects, since, log, out, self.has)
             else:
                 out["failed"].append({"source": "jira", "error": "jira.search_issues is not available in this run"})
 
@@ -201,10 +202,20 @@ class GatewaySource:
             except Exception as e:  # noqa: BLE001
                 out["failed"].append({"source": f"github-reviews:{key}", "error": err_text(e, 200)})
 
+        async def pr_commits(p: dict) -> None:
+            """The PR's own commit SHAs: the one hard proof that a loose commit belongs to it."""
+            if "github.list_commits_on_a_pull_request" not in self.has:
+                return
+            try:
+                rows = await self._paged("github.list_commits_on_a_pull_request", {"owner": owner, "repo": name, "pull_number": p.get("number")}, ("commits",), 250)
+                p["_commit_shas"] = [str(c.get("sha")) for c in rows if c.get("sha")]
+            except Exception as e:  # noqa: BLE001 - keys/files still give evidence; noted for the failed-sources list
+                out["failed"].append({"source": f"github-pr-commits:{repo}#{p.get('number')}", "error": err_text(e, 200)})
+
         jobs = []
         for n, p in enumerate(prs):
             p["_repo"] = repo
-            jobs += [files(p, n < MAX_PR_FILE_LOOKUPS), reviews(p)]
+            jobs += [files(p, n < MAX_PR_FILE_LOOKUPS), reviews(p), pr_commits(p)]
             out["github"]["prs"].append(p)
         if len(prs) > MAX_PR_FILE_LOOKUPS:
             out["capped"].append(f"pr files for {repo}: first {MAX_PR_FILE_LOOKUPS} PRs only")
@@ -230,6 +241,7 @@ class GatewaySource:
         picked = rows[:MAX_COMMITS_PER_REPO]
 
         pr_shas = {str(p.get("merge_commit_sha")) for p in out["github"]["prs"] if p.get("merge_commit_sha")}
+        pr_shas |= {sha for p in out["github"]["prs"] for sha in (p.get("_commit_shas") or [])}
         pr_nums = {p.get("number") for p in out["github"]["prs"] if p.get("_repo") == repo}
 
         def covered(c: dict) -> bool:
@@ -286,12 +298,16 @@ class GatewaySource:
             picked, missing = channels_to_read(chans, self.slack_channels, self.include_dms, log)
             if self.include_dms and not any(is_dm_channel(c) for c in picked):
                 out["capped"].append("include_dms=Yes but no DM was listed: add a person's Slack user ID (or *dm* for all) to the channels box to read it")
+            visible = sorted(str(c.get("name", "")) for c in chans if not is_dm_channel(c) and c.get("name"))
             for m in missing:
+                close = difflib.get_close_matches(m.lower(), [v.lower() for v in visible], n=3, cutoff=0.6)
+                shown = ", ".join("#" + v for v in visible[:40]) + (" ..." if len(visible) > 40 else "")
                 out["failed"].append({"source": f"slack:#{m}", "error": (
-                    f"#{m} is not in the channel list of the connected Slack account ({len(chans)} channels listed, public and private). "
-                    "Check: the name is spelled exactly; you are a member of it (a private channel is only listed for members); "
-                    "and `gravity connect slack` was done in the same workspace. If the connection is older than the private channel, "
-                    "reconnect it so private channels are readable.")})
+                    f"#{m} is not in the channel list of the connected Slack account, so nothing was read for it. "
+                    + (f"Did you mean: {', '.join('#' + c for c in close)}? " if close else "")
+                    + f"Channels it can see: {shown}. "
+                    "Rerun with the exact name or the channel ID. A private channel is only listed when the connected account is a member; "
+                    "if the connection is older than the private channel, reconnect it so private channels are readable.")})
             for ch in picked:
                 if ch.get("is_member") is False:
                     out["failed"].append({"source": f"slack:#{ch.get('name', '')}", "error": "connected Slack account is not a member of this channel; join it, then rerun"})
