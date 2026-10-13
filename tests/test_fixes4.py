@@ -47,6 +47,15 @@ def test_unknown_channel_lists_visible_channels_and_suggests():
     assert out["slack"]["threads"] == []
 
 
+def test_mixed_valid_and_unknown_channels_reads_nothing():
+    # one bad channel name stops the whole Slack read - the good channel is not read either
+    gw = Gateway()
+    out = asyncio.run(GatewaySource(gw, ME, [], parse_channels("payments-eng,payments-engr"), False, [], HAS).fetch(SINCE, None, ToolLog()))
+    assert out["slack"]["threads"] == []
+    assert not any(n == "slack.search_messages" for n, _ in gw.calls)
+    assert any(f["source"] == "slack" and "no Slack reading was done at all" in f["error"] for f in out["failed"])
+
+
 def test_channel_id_accepted_end_to_end():
     gw = Gateway()
     out = asyncio.run(GatewaySource(gw, ME, [], parse_channels("C1"), False, [], HAS).fetch(SINCE, None, ToolLog()))
@@ -66,22 +75,23 @@ def run_jira(gw, projects, has):
     return asyncio.run(GatewaySource(gw, ME, [], parse_channels("#payments-eng"), False, projects, has, [], ["Parth Singh"]).fetch(SINCE, None, ToolLog()))
 
 
-def test_jira_preflight_canonicalises_case_and_reports_typo():
+def test_jira_preflight_canonicalises_case():
     gw = JiraProjects()
-    out = run_jira(gw, ["pay", "PAY2"], HAS | {"jira.get_all_projects"})
+    out = run_jira(gw, ["pay"], HAS | {"jira.get_all_projects"})
     q = next(a for n, a in gw.calls if n == "jira.search_issues")
     assert "project in (PAY)" in q["jql"]  # the lowercase input resolves to the real key
-    err = next(f["error"] for f in out["failed"] if f["source"] == "jira:PAY2")
-    assert "not visible" in err and "Did you mean: PAY?" in err and "SRCH" in err
-    assert [t["key"] for t in out["jira"]] == ["PAY-1", "PAY-2", "PAY-3"]  # the valid project is still read
+    assert [t["key"] for t in out["jira"]] == ["PAY-1", "PAY-2", "PAY-3"]
 
 
-def test_jira_preflight_all_keys_wrong_reads_nothing():
+def test_jira_mixed_valid_and_invalid_keys_reads_nothing():
+    # one wrong key stops the whole Jira read - the valid key is not read either
     gw = JiraProjects()
-    out = run_jira(gw, ["NOPE"], HAS | {"jira.get_all_projects"})
+    out = run_jira(gw, ["pay", "PAY2"], HAS | {"jira.get_all_projects"})
     assert out["jira"] == []
     assert not any(n == "jira.search_issues" for n, _ in gw.calls)
-    assert any(f["source"] == "jira:NOPE" for f in out["failed"])
+    err = next(f["error"] for f in out["failed"] if f["source"] == "jira:PAY2")
+    assert "not visible" in err and "Did you mean: PAY?" in err and "SRCH" in err
+    assert any(f["source"] == "jira" and "no Jira reading was done at all" in f["error"] for f in out["failed"])
 
 
 class JiraProjectsRefused(Gateway):
@@ -91,8 +101,19 @@ class JiraProjectsRefused(Gateway):
         return await super().__call__(name, args)
 
 
-def test_jira_preflight_refused_uses_keys_as_given_and_says_so():
+def test_jira_preflight_refused_blocks_the_read():
+    # an auth refusal means the keys are unverified, not safe: nothing is read
     gw = JiraProjectsRefused()
     out = run_jira(gw, ["PAY"], HAS | {"jira.get_all_projects"})
-    assert [t["key"] for t in out["jira"]] == ["PAY-1", "PAY-2", "PAY-3"]
-    assert any("could not be checked" in f["error"] for f in out["failed"] if f["source"] == "jira-preflight")
+    assert out["jira"] == []
+    assert not any(n == "jira.search_issues" for n, _ in gw.calls)
+    err = next(f["error"] for f in out["failed"] if f["source"] == "jira-preflight")
+    assert "could not be verified, so no Jira reading was done" in err
+
+
+def test_jira_preflight_tool_missing_blocks_the_read():
+    gw = Gateway()  # the base gateway never answers jira.get_all_projects
+    out = run_jira(gw, ["PAY"], HAS - {"jira.get_all_projects"})
+    assert out["jira"] == []
+    assert not any(n == "jira.search_issues" for n, _ in gw.calls)
+    assert any(f["source"] == "jira-preflight" and "not available" in f["error"] for f in out["failed"])
