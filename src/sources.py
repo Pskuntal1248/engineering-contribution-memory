@@ -103,13 +103,18 @@ class GatewaySource:
         out: dict[str, Any] = {"github": {"prs": [], "reviews": {}, "commits": []}, "jira": [], "slack": {"channels": [], "threads": []}, "docs": [], "failed": [], "capped": []}
         import adapters
 
+        chans, picked, projects, verified = await self._preflight(out, log)
+        if not verified:  # check every named source BEFORE doing any work: one bad input stops the whole read
+            out["failed"].append({"source": "preflight", "error": "one or more configured sources could not be verified, so no contribution data was read at all. Fix the inputs above and rerun."})
+            return out
+
         async def slack_part() -> None:
             if self.slack_channels or self.include_dms:  # no Slack call at all unless the user named channels
-                await self._slack(out, since, log)
+                await self._slack(out, since, log, picked)
 
         async def jira_part() -> None:
             if "jira.search_issues" in self.has:
-                await adapters.fetch_jira(self.call, self.jira_projects, since, log, out, self.has)
+                await adapters.fetch_jira(self.call, projects, since, log, out)
             else:
                 out["failed"].append({"source": "jira", "error": "jira.search_issues is not available in this run"})
 
@@ -135,6 +140,71 @@ class GatewaySource:
         if not self.docs_sources:
             out["failed"].append({"source": "docs", "error": "no docs source chosen (set docs_source to Confluence, Notion or Google Drive)"})
         return out
+
+    async def _preflight(self, out: dict, log: ToolLog) -> tuple[list[dict], list[dict], list[str], bool]:
+        """Verify every named source input BEFORE any contribution is read. The channel list and the project list are
+        discovery calls, everything else waits. One unverifiable input fails the whole run's reads; the errors list what
+        the connected account can actually see, with close-match suggestions - nothing is silently substituted."""
+        from guards import channels_to_read, is_dm_channel
+        import adapters
+        chans: list[dict] = []
+        picked: list[dict] = []
+        projects = list(self.jira_projects)
+        ok = True
+        if self.slack_channels or self.include_dms:
+            try:
+                log.add("slack.list_channels")
+                chans = await self._list_channels(log)
+                out["slack"]["channels"] = chans
+            except Exception as e:  # noqa: BLE001 - the channel list itself is unreadable: every channel input is unverified
+                out["failed"].append({"source": "slack", "error": "the channel list could not be read, so the configured channels could not be verified: " + err_text(e, 200)})
+                ok = False
+            else:
+                picked, missing = channels_to_read(chans, self.slack_channels, self.include_dms, log)
+                visible = sorted(str(c.get("name", "")) for c in chans if not is_dm_channel(c) and c.get("name"))
+                for m in missing:
+                    close = difflib.get_close_matches(m.lower(), [v.lower() for v in visible], n=3, cutoff=0.6)
+                    shown = ", ".join("#" + v for v in visible[:40]) + (" ..." if len(visible) > 40 else "")
+                    out["failed"].append({"source": f"slack:#{m}", "error": (
+                        f"#{m} is not in the channel list of the connected Slack account. "
+                        + (f"Did you mean: {', '.join('#' + c for c in close)}? " if close else "")
+                        + f"Channels it can see: {shown}. "
+                        "Rerun with the exact name or the channel ID. A private channel is only listed when the connected account is a member; "
+                        "if the connection is older than the private channel, reconnect it so private channels are readable.")})
+                for ch in picked:
+                    if ch.get("is_member") is False:
+                        missing.append(str(ch.get("name", "")))
+                        out["failed"].append({"source": f"slack:#{ch.get('name', '')}", "error": "connected Slack account is not a member of this channel; join it, then rerun"})
+                if missing:
+                    ok = False
+        if self.jira_projects:
+            if "jira.get_all_projects" not in self.has:
+                out["failed"].append({"source": "jira-preflight", "error": "the configured project keys could not be verified (jira.get_all_projects is not available in this run). Fix the tool declaration or the connection and rerun."})
+                ok = False
+            else:
+                try:
+                    log.add("jira.get_all_projects")
+                    seen = adapters.rows(await self.call("jira.get_all_projects", {"max_results": 200}), "values", "projects", "results")
+                except Exception as e:  # noqa: BLE001 - an auth refusal means the keys are unverified, not safe
+                    out["failed"].append({"source": "jira-preflight", "error": "the configured project keys could not be verified: " + err_text(e, 120)})
+                    ok = False
+                else:
+                    canon = {str(p.get("key", "")).upper(): str(p.get("key", "")) for p in seen if p.get("key")}
+                    canon = {k: v for k, v in canon.items() if k}
+                    checked: list[str] = []
+                    for proj in projects:
+                        hit = canon.get(str(proj).upper())
+                        if hit:
+                            checked.append(hit)
+                        else:
+                            ok = False
+                            close = difflib.get_close_matches(str(proj).upper(), sorted(canon), n=3, cutoff=0.6)
+                            out["failed"].append({"source": f"jira:{proj}", "error": (
+                                f"project {proj} is not visible to the connected Jira account. "
+                                + (f"Did you mean: {', '.join(close)}? " if close else "")
+                                + f"Projects it can see: {', '.join(sorted(canon.values())) or 'none'}. Rerun with the exact project key.")})
+                    projects = checked
+        return chans, picked, projects, ok
 
     async def _paged(self, tool: str, args: dict, keys: tuple[str, ...], cap: int, since: str | None = None) -> list[dict]:
         """All pages of a GitHub list tool (default page size is 30, so one call silently dropped everything past it). Stops on a short page,
@@ -289,31 +359,9 @@ class GatewaySource:
                 break
         return chans
 
-    async def _slack(self, out: dict, since: str, log: ToolLog) -> None:
+    async def _slack(self, out: dict, since: str, log: ToolLog, picked: list[dict]) -> None:
+        from guards import is_dm_channel
         try:
-            log.add("slack.list_channels")
-            chans = await self._list_channels(log)
-            out["slack"]["channels"] = chans
-            from guards import channels_to_read, is_dm_channel
-            picked, missing = channels_to_read(chans, self.slack_channels, self.include_dms, log)
-            visible = sorted(str(c.get("name", "")) for c in chans if not is_dm_channel(c) and c.get("name"))
-            for m in missing:
-                close = difflib.get_close_matches(m.lower(), [v.lower() for v in visible], n=3, cutoff=0.6)
-                shown = ", ".join("#" + v for v in visible[:40]) + (" ..." if len(visible) > 40 else "")
-                out["failed"].append({"source": f"slack:#{m}", "error": (
-                    f"#{m} is not in the channel list of the connected Slack account, so nothing was read for it. "
-                    + (f"Did you mean: {', '.join('#' + c for c in close)}? " if close else "")
-                    + f"Channels it can see: {shown}. "
-                    "Rerun with the exact name or the channel ID. A private channel is only listed when the connected account is a member; "
-                    "if the connection is older than the private channel, reconnect it so private channels are readable.")})
-            unreadable = 0
-            for ch in picked:
-                if ch.get("is_member") is False:
-                    unreadable += 1
-                    out["failed"].append({"source": f"slack:#{ch.get('name', '')}", "error": "connected Slack account is not a member of this channel; join it, then rerun"})
-            if missing or unreadable:  # every named channel must resolve before anything is read
-                out["failed"].append({"source": "slack", "error": f"{len(missing) + unreadable} named channel(s) could not be verified, so no Slack reading was done at all. Fix the channels box and rerun."})
-                return
             if self.include_dms and not any(is_dm_channel(c) for c in picked):
                 out["capped"].append("include_dms=Yes but no DM was listed: add a person's Slack user ID (or *dm* for all) to the channels box to read it")
             if "slack.search_messages" in self.has and "slack.fetch_message_thread_from_a_conversation" in self.has:
