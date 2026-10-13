@@ -24,8 +24,8 @@ inputs:
     required: true
   - name: jira_site
     type: url
-    label: "Jira site URL (used when a Jira tool is available)"
-    required: true
+    label: "Jira site URL (optional: read from your connected Jira when blank)"
+    required: false
   - name: jira_projects
     type: textarea
     label: "Jira project keys, comma separated"
@@ -116,6 +116,7 @@ permissions:
     - github.list_commits
     - github.get_commit
     - jira.search_issues
+    - jira.get_server_info
     - jira.get_issue
     - jira.list_issue_comments
     - confluence.cql_search
