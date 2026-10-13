@@ -149,28 +149,35 @@ async def fetch_jira(call: Call, projects: list[str], since: str, log: ToolLog, 
     if not projects:
         out["failed"].append({"source": "jira", "error": "no Jira project keys given"})
         return
-    if has and "jira.get_all_projects" in has:  # check the keys before any ticket read; a wrong key must not silently read nothing
-        try:
-            log.add("jira.get_all_projects")
-            visible = rows(await call("jira.get_all_projects", {"max_results": 200}), "values", "projects", "results")
-            canon = {str(p.get("key", "")).upper(): str(p.get("key", "")) for p in visible if p.get("key")}
-            canon = {k: v for k, v in canon.items() if k}
-            checked: list[str] = []
-            for proj in projects:
-                hit = canon.get(str(proj).upper())
-                if hit:
-                    checked.append(hit)
-                else:
-                    close = difflib.get_close_matches(str(proj).upper(), sorted(canon), n=3, cutoff=0.6)
-                    out["failed"].append({"source": f"jira:{proj}", "error": (
-                        f"project {proj} is not visible to the connected Jira account, so nothing was read for it. "
-                        + (f"Did you mean: {', '.join(close)}? " if close else "")
-                        + f"Projects it can see: {', '.join(sorted(canon.values())) or 'none'}. Rerun with the exact project key.")})
-            projects = checked
-            if not projects:
-                return
-        except Exception as e:  # noqa: BLE001 - the grant behind this tool is unverified; without it there is no preflight
-            out["failed"].append({"source": "jira-preflight", "error": "project keys could not be checked first, so they are used as given: " + err_text(e, 120)})
+    # the keys are checked before any ticket is read; an unverifiable or wrong key stops the whole Jira read
+    if not has or "jira.get_all_projects" not in has:
+        out["failed"].append({"source": "jira-preflight", "error": "the configured project keys could not be verified (jira.get_all_projects is not available in this run), so no Jira reading was done. Fix the tool declaration or the connection and rerun."})
+        return
+    try:
+        log.add("jira.get_all_projects")
+        visible = rows(await call("jira.get_all_projects", {"max_results": 200}), "values", "projects", "results")
+    except Exception as e:  # noqa: BLE001 - an auth refusal here means the keys are unverified, not safe
+        out["failed"].append({"source": "jira-preflight", "error": "the configured project keys could not be verified, so no Jira reading was done: " + err_text(e, 120)})
+        return
+    canon = {str(p.get("key", "")).upper(): str(p.get("key", "")) for p in visible if p.get("key")}
+    canon = {k: v for k, v in canon.items() if k}
+    checked: list[str] = []
+    bad = 0
+    for proj in projects:
+        hit = canon.get(str(proj).upper())
+        if hit:
+            checked.append(hit)
+        else:
+            bad += 1
+            close = difflib.get_close_matches(str(proj).upper(), sorted(canon), n=3, cutoff=0.6)
+            out["failed"].append({"source": f"jira:{proj}", "error": (
+                f"project {proj} is not visible to the connected Jira account. "
+                + (f"Did you mean: {', '.join(close)}? " if close else "")
+                + f"Projects it can see: {', '.join(sorted(canon.values())) or 'none'}. Rerun with the exact project key.")})
+    if bad:
+        out["failed"].append({"source": "jira", "error": f"{bad} configured project key(s) could not be verified, so no Jira reading was done at all. Fix the keys above and rerun."})
+        return
+    projects = checked
     jql = (f'project in ({",".join(projects)}) AND updated >= "{since[:10]}" '
            f'AND (assignee = currentUser() OR reporter = currentUser() OR commentedBy = currentUser()) ORDER BY updated DESC')
     found: list[dict] = []
