@@ -106,6 +106,7 @@ class GatewaySource:
         chans, picked, projects, verified = await self._preflight(out, log)
         if not verified:  # check every named source BEFORE doing any work: one bad input stops the whole read
             out["failed"].append({"source": "preflight", "error": "one or more configured sources could not be verified, so no contribution data was read at all. Fix the inputs above and rerun."})
+            out["blocked"] = True
             return out
 
         async def slack_part() -> None:
