@@ -262,13 +262,13 @@ def test_one_doc_fetch_failing_never_drops_the_doc_and_the_error_is_unwrapped():
 
     async def call(name, args):
         if name == "notion.list_users":
-            return {"results": [{"id": "u1", "name": "Parth Singh", "type": "person", "object": "user"}]}
+            return {"results": [{"id": "u1", "name": "Parth Singh", "type": "person", "object": "user", "person": {"email": "ps.kuntal2005@gmail.com"}}]}
         if name == "notion.search_notion_page":
             return {"results": [{"id": "p1", "url": "https://n/p1", "last_edited_time": "2026-10-01T10:00:00Z", "created_time": "2026-10-01T10:00:00Z",
                                  "created_by": {"id": "u1"}, "last_edited_by": {"id": "u1"}, "properties": {"Name": {"type": "title", "title": [{"plain_text": "Design: Payout reconciliation job"}]}}}]}
         raise ExceptionGroup("unhandled errors in a TaskGroup", [RuntimeError("503 upstream timeout")])
     out = {"docs": [], "failed": [], "capped": []}
-    asyncio.run(fetch_notion(call, "2026-01-01T00:00:00Z", ToolLog(), out, ["Parth Singh"]))
+    asyncio.run(fetch_notion(call, "2026-01-01T00:00:00Z", ToolLog(), out, ["Parth Singh", "ps.kuntal2005@gmail.com"]))
     assert len(out["docs"]) == 1 and out["docs"][0]["body_failed"]
     assert out["failed"] and "503 upstream timeout" in out["failed"][0]["error"] and "TaskGroup" not in out["failed"][0]["error"]
     d = N.normalize_doc(out["docs"][0], "notion", ["Parth Singh"])
@@ -293,7 +293,7 @@ def test_notion_retries_once_and_never_runs_more_than_two_page_reads_at_once():
 
     async def call(name, args):
         if name == "notion.list_users":
-            return {"results": [{"id": "u1", "name": "Parth Singh", "type": "person", "object": "user"}]}
+            return {"results": [{"id": "u1", "name": "Parth Singh", "type": "person", "object": "user", "person": {"email": "ps.kuntal2005@gmail.com"}}]}
         if name == "notion.search_notion_page":
             return {"results": [{"id": f"p{i}", "url": f"https://n/p{i}", "last_edited_time": "2026-10-01T10:00:00Z", "created_time": "2026-10-01T10:00:00Z",
                                  "created_by": {"id": "u1"}, "last_edited_by": {"id": "u1"}, "properties": {"Name": {"type": "title", "title": [{"plain_text": f"Design: Thing {i}"}]}}} for i in range(6)]}
@@ -306,7 +306,7 @@ def test_notion_retries_once_and_never_runs_more_than_two_page_reads_at_once():
             raise ExceptionGroup("unhandled errors in a TaskGroup", [RuntimeError("429 rate limit")])
         return "# Design\nA long enough body describing the decision we took and why we took it."
     out = {"docs": [], "failed": [], "capped": []}
-    asyncio.run(fetch_notion(call, "2026-01-01T00:00:00Z", ToolLog(), out, ["Parth Singh"]))
+    asyncio.run(fetch_notion(call, "2026-01-01T00:00:00Z", ToolLog(), out, ["Parth Singh", "ps.kuntal2005@gmail.com"]))
     assert len(out["docs"]) == 6 and live["max"] <= 2 and seen["p0"] == 2
     assert not out["failed"] and not any(d.get("body_failed") for d in out["docs"])
 
