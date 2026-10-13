@@ -117,7 +117,7 @@ class GatewaySource:
                 return
             if tool in self.has:
                 try:  # one docs source failing never stops the others
-                    await (fn(self.call, since, log, out, self.names) if src_name == "notion" else fn(self.call, since, log, out))
+                    await (fn(self.call, since, log, out, self.names) if src_name in {"notion", "confluence"} else fn(self.call, since, log, out))
                 except Exception as e:  # noqa: BLE001
                     out["failed"].append({"source": f"docs:{src_name}", "error": adapters.explain(f"docs:{src_name}", err_text(e, 400))})
             else:
@@ -230,15 +230,18 @@ class GatewaySource:
         picked = rows[:MAX_COMMITS_PER_REPO]
 
         pr_shas = {str(p.get("merge_commit_sha")) for p in out["github"]["prs"] if p.get("merge_commit_sha")}
-        pr_titles = {(p.get("title") or "").strip() for p in out["github"]["prs"] if p.get("_repo") == repo}
+        pr_nums = {p.get("number") for p in out["github"]["prs"] if p.get("_repo") == repo}
 
         def covered(c: dict) -> bool:
-            """Already part of one of the user's PRs (merge sha, or same title): the PR's own file list gives the size, so no get_commit call."""
+            """Already part of one of the user's PRs on hard evidence (merge sha, or a squash message naming the PR number):
+            the PR's own file list gives the size, so no get_commit call. A same title is not evidence - the commit gets its
+            lookup and ingest decides on keys/files."""
             msg = str(((c.get("commit") or {}).get("message")) or c.get("message") or "").splitlines()[:1]
-            first = re.sub(r"\s*\(#\d+\)\s*$", "", msg[0].strip()) if msg else ""
+            first = msg[0].strip() if msg else ""
             if first.startswith(("Merge pull request #", "Merge branch ", "Merge remote-tracking")):
                 return True  # a merge commit carries no work of its own (the PR does); list_pull_requests may not return merge shas
-            return str(c.get("sha")) in pr_shas or bool(first and first in pr_titles)
+            m = re.search(r"\(#(\d+)\)\s*$", first)
+            return str(c.get("sha")) in pr_shas or bool(m and int(m.group(1)) in pr_nums)
 
         async def detail(n: int, c: dict) -> None:
             c["_repo"] = repo
@@ -306,3 +309,4 @@ class GatewaySource:
                     out["slack"]["threads"].append({"channel": ch.get("name", ""), "channel_id": ch["id"], "messages": ms})
         except Exception as e:  # noqa: BLE001
             out["failed"].append({"source": "slack", "error": err_text(e, 200)})
+
