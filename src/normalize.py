@@ -406,12 +406,14 @@ def normalize_doc(raw: dict[str, Any], source: str, username_hints: Iterable[str
     hints = {h.lower() for h in username_hints if h}
     author = str(raw.get("author") or "")
     editors = [str(e) for e in raw.get("editors", [])]
-    mine = bool(raw.get("_mine")) or author.lower() in hints or any(e.lower() in hints for e in editors)
+    named = author.lower() in hints or any(e.lower() in hints for e in editors)
+    mine = bool(raw.get("_mine"))  # a matching name on the page is a claim, not verified identity: it never confers credit on its own
     return Item(
         id=f"doc:{source}:{did}", source="doc", type="doc", date=iso(raw.get("modified") or raw.get("created")), title=title,
         url=raw.get("url", ""), text=body[:4000], author=author, keys=ticket_keys(title, body), refs=urls_in(body),
         meta={"doc_source": source, "confidential": conf, "mine": mine, "labels": labels,
-              "kind": raw.get("kind", "")},
+              "kind": raw.get("kind", ""),
+              "attribution": str(raw.get("_attribution") or ("named on the page as author/editor (unverified)" if named and not mine else ""))},
     )
 
 
@@ -430,3 +432,4 @@ def dedupe(items: Iterable[Item]) -> tuple[list[Item], int]:
             seen_url.add(it.url)
         out.append(it)
     return out, dropped
+
