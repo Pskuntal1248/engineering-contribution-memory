@@ -213,7 +213,9 @@ def test_notion_identity_by_name_solo_workspace_and_wrapped_shapes():
             return await super().__call__(name, args)
 
     solo = fetch(Solo(), docs=("notion",))
-    assert len(solo["docs"]) == 2 and any("single-person" in c for c in solo["capped"])  # one person: every page is theirs
+    # one person in the workspace is not proof of identity: no name match, no byline -> nothing is credited
+    assert solo["docs"] == [] and not any("single-person" in c for c in solo["capped"])
+    assert any("could not be verified as yours" in c for c in solo["capped"])
 
     class Crowd(Gateway):
         async def __call__(self, name, args):
@@ -282,3 +284,4 @@ def test_slack_lists_private_channels_with_paging_and_names_the_cause_once():
 
     nm = run("uc10-test", NotMember())
     assert any("not a member" in f["error"] for f in nm["failed"])
+
