@@ -66,8 +66,11 @@ class Gateway:
                                 {"id": "n2", "created_by": {"id": "someone"}, "last_edited_by": {"id": "someone"}, "last_edited_time": "2026-09-02T00:00:00Z", "properties": {}}]}}}
         if name == "notion.get_page_markdown":
             return {"markdown": "# Design notes\nwe chose a queue"}
+        if name == "drive.get_about":
+            return {"user": {"displayName": "Parth Singh", "emailAddress": "ps.kuntal2005@gmail.com", "permissionId": "pid-me"}}
         if name == "drive.find_file":
-            return {"files": [{"id": "d1", "name": "Spec", "modifiedTime": "2026-09-03T00:00:00Z", "owners": [{"displayName": "Parth Singh"}], "webViewLink": "https://docs.google.com/d1"}]}
+            return {"files": [{"id": "d1", "name": "Spec", "modifiedTime": "2026-09-03T00:00:00Z", "owners": [{"displayName": "Parth Singh", "emailAddress": "ps.kuntal2005@gmail.com"}],
+                               "lastModifyingUser": {"displayName": "Parth Singh", "emailAddress": "ps.kuntal2005@gmail.com"}, "webViewLink": "https://docs.google.com/d1"}]}
         if name == "drive.export_google_workspace_file":
             return "spec body with the details of the retry design"
         if name == "slack.list_channels":
@@ -214,10 +217,12 @@ def test_notion_identity_by_name_solo_workspace_and_wrapped_shapes():
                 return {"results": [{"object": "user", "id": "u-only", "type": "person", "name": "Someone Else"}]}
             return await super().__call__(name, args)
 
-    solo = fetch(Solo(), docs=("notion",))
-    # one person in the workspace is not proof of identity: no name match, no byline -> nothing is credited
+    solo_gw = Solo()
+    solo = fetch(solo_gw, docs=("notion",))
+    # one person in the workspace is not proof of identity: nothing is read or credited
     assert solo["docs"] == [] and not any("single-person" in c for c in solo["capped"])
-    assert any("could not be verified as yours" in c for c in solo["capped"])
+    assert any("your Notion user could not be verified" in c for c in solo["capped"])
+    assert not any(n == "notion.get_page_markdown" for n, _ in solo_gw.calls)
 
     class Crowd(Gateway):
         async def __call__(self, name, args):
@@ -225,8 +230,10 @@ def test_notion_identity_by_name_solo_workspace_and_wrapped_shapes():
                 return {"results": [{"object": "user", "id": "a", "type": "person", "name": "A B"}, {"object": "user", "id": "b", "type": "person", "name": "C D"}]}
             return await super().__call__(name, args)
 
-    crowd = fetch(Crowd(), docs=("notion",))
+    crowd_gw = Crowd()
+    crowd = fetch(crowd_gw, docs=("notion",))
     assert crowd["docs"] == [] and "could not tell which of 2" in crowd["failed"][0]["error"]
+    assert not any(n == "notion.get_page_markdown" for n, _ in crowd_gw.calls)
 
 
 def test_rows_reads_wrapped_envelopes():
