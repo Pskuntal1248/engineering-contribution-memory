@@ -165,6 +165,9 @@ def make_graph(deps: Deps):
         notes = list(ctx["notes"])
         failed = list(ctx["raw"].get("failed", []))
         notes += [f"capped: {c}" for c in dict.fromkeys(ctx["raw"].get("capped", []))]
+        if ctx["raw"].get("blocked"):  # preflight stopped the read: no analysis and no model calls on unverified inputs
+            ctx["items"], ctx["new_ids"], ctx["failed"], ctx["notes"], ctx["budget"], ctx["prof"] = [], set(), failed, notes, budget, None
+            return {"ctx": ctx}
         if mode in {"backfill", "weekly"}:
             ing = ingest(ctx["raw"], cfg, ctx["log"])
             seen = set(prior.get("seen", []))
@@ -197,6 +200,18 @@ def make_graph(deps: Deps):
 
     async def render(state: State) -> dict:
         ctx, inp, cfg = state["ctx"], state["inputs"], state["ctx"]["cfg"]
+        if ctx["raw"].get("blocked"):  # a stopped run says so - it must not look like a completed profile
+            bullets = [f"{f.get('source')}: {f.get('error')}" for f in ctx["failed"]]
+            corpus = {"title": "Run stopped - fix the inputs and rerun",
+                      "summary": "Nothing was read, no model calls were made, and the saved profile was left unchanged, because configured sources could not be verified.",
+                      "sections": [{"heading": "Fix these, then rerun", "bullets": bullets}]}
+            result = {"status": "blocked", "model_calls": 0, "seconds": round(ctx["budget"].elapsed(), 1), "new_items": 0,
+                      "dm_reads": len(ctx["log"].dm_reads()),
+                      "page_summary": corpus["summary"], "page_sections": [sec["heading"] for sec in corpus["sections"]],
+                      "page_chars": len(outputs.to_markdown(corpus, with_tables=False))}
+            outputs.write_local_copy(corpus, result=result)
+            ctx["corpus"], ctx["result"] = corpus, result
+            return {"ctx": ctx, "corpus": corpus, "result": result}
         items, prof, mode = ctx["items"], ctx["prof"], ctx["mode"]
         names = {n for n in cfg.name_hints if n}
         colleagues = sorted({a for i in items for a in [i.author, *i.co_authors, *(i.meta.get("participants") or [])] if a and a not in names and a.lower() != cfg.username.lower()})
@@ -213,6 +228,7 @@ def make_graph(deps: Deps):
         corpus, result = outputs.corpus_for(mode, prof, items, title=f"{title} - {cfg.username}" if cfg.username else title, terms=terms, keep_internal=str(inp.get("keep_internal_details", "No")).lower() == "yes",
                                             colleagues=colleagues, names=names, date_from=str(inp.get("period_from", "") or ""), date_to=str(inp.get("period_to", "") or ""),
                                             run_notes=ctx["notes"], failed=ctx["failed"], quiet_line=quiet, new_ids=window, window_label=window_label)
+        result["status"] = "completed"
         result["model_calls"] = ctx["budget"].calls
         result["seconds"] = round(ctx["budget"].elapsed(), 1)
         result["new_items"] = len(ctx["new_ids"])
@@ -234,8 +250,8 @@ def make_graph(deps: Deps):
 
     async def persist(state: State) -> dict:
         ctx, inp = state["ctx"], state["inputs"]
-        if ctx["mode"] in ON_DEMAND:
-            return {}  # on-demand answers never change the saved profile
+        if ctx["mode"] in ON_DEMAND or ctx["raw"].get("blocked"):
+            return {}  # on-demand answers and stopped runs never change the saved profile
         prof, items, prior = ctx["prof"], ctx["items"], ctx["prior"]
         po = prof["project_of"]
         profile = {
@@ -298,4 +314,5 @@ async def graph():
         return GatewaySource(call, cfg.username, cfg.repos, cfg.slack_channels, cfg.include_dms, cfg.jira_projects, has, cfg.docs_sources, cfg.name_hints)
 
     return make_graph(Deps(source_factory, llm, embedder=embedder, identity=identity, site=site))
+
 
