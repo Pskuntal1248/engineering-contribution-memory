@@ -41,19 +41,19 @@ def test_unknown_channel_lists_visible_channels_and_suggests():
     gw = Gateway()
     out = asyncio.run(GatewaySource(gw, ME, [], parse_channels("payments-engr"), False, [], HAS).fetch(SINCE, None, ToolLog()))
     err = next(f["error"] for f in out["failed"] if f["source"] == "slack:#payments-engr")
-    assert "nothing was read" in err
     assert "Did you mean: #payments-eng?" in err
     assert "#random" in err  # the visible list is shown so the user can choose
     assert out["slack"]["threads"] == []
+    assert [n for n, _ in gw.calls] == ["slack.list_channels"]  # one bad input: nothing else was called at all
 
 
 def test_mixed_valid_and_unknown_channels_reads_nothing():
-    # one bad channel name stops the whole Slack read - the good channel is not read either
+    # one bad channel name stops the whole read - the good channel is not read either
     gw = Gateway()
     out = asyncio.run(GatewaySource(gw, ME, [], parse_channels("payments-eng,payments-engr"), False, [], HAS).fetch(SINCE, None, ToolLog()))
     assert out["slack"]["threads"] == []
-    assert not any(n == "slack.search_messages" for n, _ in gw.calls)
-    assert any(f["source"] == "slack" and "no Slack reading was done at all" in f["error"] for f in out["failed"])
+    assert [n for n, _ in gw.calls] == ["slack.list_channels"]
+    assert any(f["source"] == "preflight" and "no contribution data was read at all" in f["error"] for f in out["failed"])
 
 
 def test_channel_id_accepted_end_to_end():
@@ -91,7 +91,8 @@ def test_jira_mixed_valid_and_invalid_keys_reads_nothing():
     assert not any(n == "jira.search_issues" for n, _ in gw.calls)
     err = next(f["error"] for f in out["failed"] if f["source"] == "jira:PAY2")
     assert "not visible" in err and "Did you mean: PAY?" in err and "SRCH" in err
-    assert any(f["source"] == "jira" and "no Jira reading was done at all" in f["error"] for f in out["failed"])
+    assert any(f["source"] == "preflight" and "no contribution data was read at all" in f["error"] for f in out["failed"])
+    assert not any(n == "slack.search_messages" for n, _ in gw.calls)  # the valid Slack input is not read either
 
 
 class JiraProjectsRefused(Gateway):
@@ -108,7 +109,8 @@ def test_jira_preflight_refused_blocks_the_read():
     assert out["jira"] == []
     assert not any(n == "jira.search_issues" for n, _ in gw.calls)
     err = next(f["error"] for f in out["failed"] if f["source"] == "jira-preflight")
-    assert "could not be verified, so no Jira reading was done" in err
+    assert "could not be verified" in err
+    assert not any(n == "slack.search_messages" for n, _ in gw.calls)  # refused Jira validation blocks Slack too
 
 
 def test_jira_preflight_tool_missing_blocks_the_read():
@@ -117,3 +119,26 @@ def test_jira_preflight_tool_missing_blocks_the_read():
     assert out["jira"] == []
     assert not any(n == "jira.search_issues" for n, _ in gw.calls)
     assert any(f["source"] == "jira-preflight" and "not available" in f["error"] for f in out["failed"])
+    assert not any(n == "slack.search_messages" for n, _ in gw.calls)
+
+
+# ------------------------------------------ the barrier is global: one bad input, zero contribution reads anywhere
+
+DOCS = ["confluence", "notion", "google drive"]
+DISCOVERY = {"slack.list_channels", "jira.get_all_projects"}  # the only calls a blocked run may make
+
+
+def test_invalid_slack_blocks_github_jira_and_docs():
+    gw = JiraProjects()
+    out = asyncio.run(GatewaySource(gw, ME, ["o/r"], parse_channels("payments-engr"), False, ["PAY"], HAS | {"jira.get_all_projects"}, DOCS, ["Parth Singh"]).fetch(SINCE, None, ToolLog()))
+    assert {n for n, _ in gw.calls} <= DISCOVERY
+    assert out["github"] == {"prs": [], "reviews": {}, "commits": []} and out["jira"] == [] and out["docs"] == [] and out["slack"]["threads"] == []
+    assert any(f["source"] == "preflight" for f in out["failed"])
+
+
+def test_refused_jira_blocks_github_slack_and_docs():
+    gw = JiraProjectsRefused()
+    out = asyncio.run(GatewaySource(gw, ME, ["o/r"], parse_channels("#payments-eng"), False, ["PAY"], HAS | {"jira.get_all_projects"}, DOCS, ["Parth Singh"]).fetch(SINCE, None, ToolLog()))
+    assert {n for n, _ in gw.calls} <= DISCOVERY  # the valid Slack channels and repos are not read either
+    assert out["github"] == {"prs": [], "reviews": {}, "commits": []} and out["docs"] == [] and out["slack"]["threads"] == []
+    assert any(f["source"] == "preflight" for f in out["failed"])
