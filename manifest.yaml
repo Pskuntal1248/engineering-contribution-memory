@@ -1,7 +1,7 @@
 contract: v1
 name: engineering-contribution-memory
 version: 0.1.1
-description: Reads the last 6 months of your GitHub, Jira, Slack and docs and keeps an evidence-linked engineering profile current. It links shipped work into projects, shows invisible work like reviews and on-call, evidences gaps against your career ladder, and produces weekly summaries, 1:1 talking points, review material and interview stories on demand. A scheduled run every Friday at 5 PM IST (you can change it) adds the week's new items to the saved profile, and the timezone setting drives dates and periods inside the report. On-demand outputs read the saved profile in seconds without re-reading your sources.
+description: Reads the last 6 months of your GitHub, Jira, Slack and docs and keeps an evidence-linked engineering profile current. It links shipped work into projects, shows invisible work like reviews and on-call, evidences gaps against your career ladder, and produces weekly summaries, 1:1 talking points, review material and interview stories on demand. A scheduled run every Friday at 5 PM IST (you can change it) adds the week's new items to the saved profile, and the timezone setting drives dates and periods inside the report. On-demand outputs read the saved profile without re-reading your sources.
 kind: monitor
 
 runtime:
