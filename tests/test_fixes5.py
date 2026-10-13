@@ -61,8 +61,8 @@ def test_drive_last_modified_by_me_is_read_and_credited():
 
 def test_drive_revision_by_me_proves_an_older_genuine_edit():
     revs = {"revisions": [
-        {"id": "1", "lastModifyingUser": {"displayName": "Someone Else", "emailAddress": "other@example.com"}},
-        {"id": "2", "lastModifyingUser": dict(ME)}]}
+        {"id": "1", "modifiedTime": "2026-09-20T10:00:00Z", "lastModifyingUser": {"displayName": "Someone Else", "emailAddress": "other@example.com"}},
+        {"id": "2", "modifiedTime": "2026-09-15T10:00:00Z", "lastModifyingUser": dict(ME)}]}
     call, exports, rev_calls = drive_call([doc("d1", "Edited long ago", lm_email="other@example.com", lm_name="Someone Else")], revisions=revs)
     out = run_drive(call)
     assert rev_calls == ["d1"] and exports == ["d1"]
@@ -70,7 +70,7 @@ def test_drive_revision_by_me_proves_an_older_genuine_edit():
 
 
 def test_drive_owning_a_doc_without_edit_evidence_reads_nothing():
-    revs = {"revisions": [{"id": "1", "lastModifyingUser": {"displayName": "Someone Else", "emailAddress": "other@example.com"}}]}
+    revs = {"revisions": [{"id": "1", "modifiedTime": "2026-09-19T10:00:00Z", "lastModifyingUser": {"displayName": "Someone Else", "emailAddress": "other@example.com"}}]}
     call, exports, rev_calls = drive_call([doc("d1", "I only own it", lm_email="other@example.com", lm_name="Someone Else")], revisions=revs)
     out = run_drive(call)
     assert rev_calls == ["d1"] and exports == []  # never opened
@@ -80,9 +80,20 @@ def test_drive_owning_a_doc_without_edit_evidence_reads_nothing():
     assert any("no proof you wrote or edited them" in c for c in out["capped"])
 
 
+def test_drive_preperiod_revision_by_me_grants_no_credit():
+    # the doc changed hands inside the period; my only edit predates it, so the recent work is not mine
+    revs = {"revisions": [
+        {"id": "1", "modifiedTime": "2025-06-01T10:00:00Z", "lastModifyingUser": dict(ME)},
+        {"id": "2", "modifiedTime": "2026-09-20T10:00:00Z", "lastModifyingUser": {"displayName": "Someone Else", "emailAddress": "other@example.com"}}]}
+    call, exports, _ = drive_call([doc("d1", "Edited long ago by me", lm_email="other@example.com", lm_name="Someone Else")], revisions=revs)
+    out = run_drive(call)
+    assert exports == [] and out["docs"][0]["_mine"] is False
+    assert any("no proof you wrote or edited them in the report period" in c for c in out["capped"])
+
+
 def test_drive_same_display_name_different_email_credits_nothing():
     # a namesake, on the file and inside its history, is a claim - not identity
-    revs = {"revisions": [{"id": "1", "lastModifyingUser": {"displayName": "Parth Singh", "emailAddress": "impostor@example.com"}}]}
+    revs = {"revisions": [{"id": "1", "modifiedTime": "2026-09-19T10:00:00Z", "lastModifyingUser": {"displayName": "Parth Singh", "emailAddress": "impostor@example.com"}}]}
     call, exports, _ = drive_call(
         [doc("d1", "Namesake's doc", owner_email="impostor@example.com", lm_email="impostor@example.com")], revisions=revs)
     out = run_drive(call)
@@ -106,7 +117,7 @@ def test_drive_unreadable_revision_history_is_a_stated_gap_not_a_credit():
 
 
 def test_drive_revision_checks_are_capped():
-    revs = {"revisions": [{"id": "1", "lastModifyingUser": {"displayName": "Someone Else", "emailAddress": "other@example.com"}}]}
+    revs = {"revisions": [{"id": "1", "modifiedTime": "2026-09-19T10:00:00Z", "lastModifyingUser": {"displayName": "Someone Else", "emailAddress": "other@example.com"}}]}
     files = [doc(f"d{i}", f"Doc {i}", lm_email="other@example.com", lm_name="Someone Else") for i in range(25)]
     call, exports, rev_calls = drive_call(files, revisions=revs)
     out = run_drive(call)
